@@ -1,4 +1,4 @@
-# Roblox Game Project
+# Bumper Party!
 
 This repo holds the plan for a Roblox game, and later its code.
 

@@ -18,11 +18,11 @@ Each mode sets its own rules for respawns and how a round ends.
 |---------------------|-------|-------------|-------|
 | **Last Car Standing** | One life | Last car on the map | Classic mode |
 | **Bump Frenzy** | Respawns | Most knock-offs when time runs out | Non-stop chaos |
-| **Team Bump** | One life or respawns (TBD) | Last team standing, or the team with the most knock-offs | 2 teams |
+| **Team Bump** | One life or respawns (TBD) | Last team standing, or the team with the most knock-offs | 2 teams. **No collision between teammates**: they pass through each other, so you can't knock a teammate off. |
 
-_These modes are suggestions; mode list not final._
+_Mode list locked for now: these three._
 
-**Choosing a mode:** _TBD:_ the lobby votes, or each player picks a queue
+**Choosing a mode:** the **lobby votes** on the mode (and map size) for the next round.
 
 ## 4. Core gameplay loop
 1. **Break / lobby:** pick a game mode (and map size), then either
@@ -36,15 +36,17 @@ _These modes are suggestions; mode list not final._
 ## 5. World and maps
 - **Base map:** a plain, small arena with edges you can fall off
 - **Map sizes:** Small (6–12 players), plus extended Medium and Large versions for bigger lobbies
-  - Players can **choose** the map size. _TBD:_ by vote, or with limits on size versus player count
+  - Map size is chosen by **lobby vote**. _TBD:_ should small player counts be blocked from picking Large?
 - **Shrinking map (waterfall hazard):** waterfalls (or something similar) close in from **randomly chosen areas** of the map over the round, which pushes players together
-  - _TBD:_ does touching the waterfall wash you off the edge, or is it just a wall?
-- **Art style:** _TBD_
+  - **Touching the waterfall slowly pushes you toward the edge.** It doesn't eliminate you instantly.
+  - **Early in the round** the push is escapable: the right items (for example boost or heavy mode) let you break free.
+  - **Later waves** push harder, until escape is no longer realistic.
+- **Art style:** **as detailed as possible, cartoon style with outlines on everything** (see section 13)
 
 ## 6. Combat rules
 - **Knock-off:** a player falls off the map. The last player to hit them gets the knock-off.
 - **Assist:** any other player who helped knock the victim off (hit them shortly before they fell, for example within ~5 seconds). **Assists count no matter who got the knock-off**, in free-for-all and team modes alike.
-  - _TBD:_ in team modes, does knocking off a teammate count?
+  - Team modes: teammates **don't collide**, so team knock-offs are impossible.
 
 ## 7. Items
 - Items spawn randomly around the map and give an advantage to lucky players.
@@ -101,10 +103,16 @@ _Not discussed yet._ If loot boxes are ever sold for Robux, Roblox rules require
 3. **Third step:** locked items, Team Bump, extended map sizes
 
 ## 12. Open questions
-- Final list and names of game modes
-- Mode and map size choice: vote, or personal queue?
-- Waterfall: instant wash-off, or a push that slowly drags you to the edge?
 - Locked items: personal spawn pool? How strong?
-- Team-kill rules in team modes
 - Exact rarity drop rates
-- Art style
+- Team Bump: one life or respawns?
+- Does voting allow Large maps with few players?
+- Waterfall: how many waves per round, and how fast?
+- Which items can escape the waterfall?
+
+## 13. Art direction
+- **Goal:** detailed, cartoony visuals with **outlines** around cars, items and the arena (cel-shaded / "toon" look)
+- Bright, saturated party colors to fit the "Party" in the name
+- **Technical notes for building:**
+  - Roblox has no built-in toon shader. Outlines are usually done with `Highlight` objects (only about 31 can show at once, so best for cars and items) or "inverted hull" outline meshes (unlimited, good for the map).
+  - Custom meshes and textures will come from Blender or the Toolbox. Code can be built with simple placeholder parts first, and the art swapped in later.

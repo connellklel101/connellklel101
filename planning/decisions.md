@@ -14,3 +14,8 @@
 | 2026-10-30 | An assist is any player who helped knock someone off, regardless of who got the knock-off or team | Rewards everyone involved |
 | 2026-10-30 | Map shrinks via waterfalls closing in from random areas | Forces action, and each round plays out differently |
 | 2026-10-30 | Some items are locked; unlock with coins or loot boxes | Long-term goals for advanced players |
+| 2026-10-30 | Waterfall slowly pushes players to the edge; early waves can be escaped with items | Tension without instant deaths |
+| 2026-10-30 | Game mode and map size chosen by lobby vote | Simple and social |
+| 2026-10-30 | Teammates don't collide in team modes | No team-killing or griefing |
+| 2026-10-30 | Art style: detailed cartoon with outlines | Creator's vision |
+| 2026-10-30 | Game modes for now: Last Car Standing, Bump Frenzy, Team Bump | Approved |
