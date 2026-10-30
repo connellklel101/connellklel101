@@ -18,7 +18,7 @@ Each mode sets its own rules for respawns and how a round ends.
 |---------------------|-------|-------------|-------|
 | **Last Car Standing** | One life | Last car on the map | Classic mode |
 | **Bump Frenzy** | Respawns | Most knock-offs when time runs out | Non-stop chaos |
-| **Team Bump** | One life or respawns (TBD) | Last team standing, or the team with the most knock-offs | 2 teams. **No collision between teammates**: they pass through each other, so you can't knock a teammate off. |
+| **Team Bump** | One life | Last team standing, or the team with the most knock-offs | 2 teams. **No collision between teammates**: they pass through each other, so you can't knock a teammate off. |
 
 _Mode list locked for now: these three._
 
@@ -36,11 +36,11 @@ _Mode list locked for now: these three._
 ## 5. World and maps
 - **Base map:** a plain, small arena with edges you can fall off
 - **Map sizes:** Small (6–12 players), plus extended Medium and Large versions for bigger lobbies
-  - Map size is chosen by **lobby vote**. _TBD:_ should small player counts be blocked from picking Large?
+  - Map size is chosen by **lobby vote**. Any size can win, even with few players.
 - **Shrinking map (waterfall hazard):** waterfalls (or something similar) close in from **randomly chosen areas** of the map over the round, which pushes players together
   - **Touching the waterfall slowly pushes you toward the edge.** It doesn't eliminate you instantly.
-  - **Early in the round** the push is escapable: the right items (for example boost or heavy mode) let you break free.
-  - **Later waves** push harder, until escape is no longer realistic.
+  - **Early in the round** the push is escapable with **boost or grapple type items**.
+  - **The closer the waterfall gets, the stronger the push**, until escape is no longer realistic.
 - **Art style:** **as detailed as possible, cartoon style with outlines on everything** (see section 13)
 
 ## 6. Combat rules
@@ -53,7 +53,8 @@ _Mode list locked for now: these three._
 - **Two kinds of item:**
   - **Basic items:** in everyone's spawn pool from the start
   - **Locked items:** more advanced items. A player must unlock them first, by **buying them with coins** or **getting them from loot boxes**.
-- _TBD:_ how locked items work in a match. Suggestion: unlocking adds the item to **your personal pool**, so when you pick up a random item box you can roll items you've unlocked. Other players won't roll it unless they've unlocked it too.
+- **Locked items in a match:** unlocking adds the item to **your personal pool**. When you grab a random item pickup you can roll items you've unlocked. Players who haven't unlocked it won't roll it.
+- **Waterfall escape items:** all boost and grapple type items can pull you out of an early waterfall.
 - _TBD:_ how strong locked items are. Make them different rather than stronger, so new players aren't crushed.
 
 ## 8. Progression
@@ -103,12 +104,9 @@ _Not discussed yet._ If loot boxes are ever sold for Robux, Roblox rules require
 3. **Third step:** locked items, Team Bump, extended map sizes
 
 ## 12. Open questions
-- Locked items: personal spawn pool? How strong?
+- Locked items: how strong?
 - Exact rarity drop rates
-- Team Bump: one life or respawns?
-- Does voting allow Large maps with few players?
 - Waterfall: how many waves per round, and how fast?
-- Which items can escape the waterfall?
 
 ## 13. Art direction
 - **Goal:** detailed, cartoony visuals with **outlines** around cars, items and the arena (cel-shaded / "toon" look)

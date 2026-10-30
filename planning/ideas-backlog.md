@@ -7,6 +7,7 @@
 - **Bouncy bumper:** your hits knock players back twice as far
 - **Oil slick:** drop a puddle that makes cars spin out
 - **Shield:** blocks one knockback
+- **Grapple hook:** fire a hook at a spot or car and reel yourself in (escapes early waterfalls)
 - **Magnet:** pulls nearby cars toward you
 - Catch-up idea: players who are losing get better items more often
 

@@ -19,3 +19,7 @@
 | 2026-10-30 | Teammates don't collide in team modes | No team-killing or griefing |
 | 2026-10-30 | Art style: detailed cartoon with outlines | Creator's vision |
 | 2026-10-30 | Game modes for now: Last Car Standing, Bump Frenzy, Team Bump | Approved |
+| 2026-10-30 | Team Bump is one life | Approved |
+| 2026-10-30 | Lobby can vote for any map size regardless of player count | Player choice |
+| 2026-10-30 | Boost and grapple items escape early waterfalls; the push grows stronger as it closes in | Skill and luck matter early; the round still ends |
+| 2026-10-30 | Locked items go into the unlocking player's personal item pool | Rewards unlocks without forcing them on others |
