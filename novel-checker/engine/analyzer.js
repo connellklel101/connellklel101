@@ -397,8 +397,9 @@
         if (t.w.length > 1 && t.w === t.w.toUpperCase()) continue; // SHOUTING
         const key = t.base;
         let st = stats.get(key);
-        if (!st) { st = { name: key, mid: 0, start: 0, chapters: new Set(), first: S }; stats.set(key, st); }
+        if (!st) { st = { name: key, mid: 0, start: 0, bang: 0, chapters: new Set(), first: S }; stats.set(key, st); }
         if (t.start) st.start++; else st.mid++;
+        if (/^[!?]/.test(S.text.slice(t.e))) st.bang++;
         st.chapters.add(S.ch);
       }
     }
@@ -411,6 +412,8 @@
       const lower = (lowerCount.get(n.toLowerCase()) || 0);
       const commonWord = spell ? spell.correct(n.toLowerCase()) : lower > 0;
       const total = st.mid + st.start;
+      // "Tish!", "Ahoy!": exclamations, not names.
+      if (st.bang >= total * 0.5) continue;
       let isName = false;
       if (commonWord) isName = st.mid >= 3 && lower <= st.mid * 0.5;
       else isName = (st.mid >= 1 && total >= 2 && lower <= total * 0.2) || (st.start >= 3 && lower === 0);
@@ -457,6 +460,7 @@
       if (t.he >= 2 && t.he > t.she * 2) gender.set(n, 'he');
       else if (t.she >= 2 && t.she > t.he * 2) gender.set(n, 'she');
     }
+    gender.tally = tally;
     return gender;
   }
 
@@ -827,6 +831,617 @@
   }
 
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+  // ------------------------------------------------------------------ name types (person / place / other)
+
+  const TITLE_RE = /^(?:mr|mrs|ms|mx|miss|dr|doctor|sir|lady|lord|captain|capt|aunt|auntie|uncle|grandma|grandpa|granny|professor|prof|king|queen|prince|princess|detective|inspector|sergeant|sgt|officer|nurse|madam|master|mistress|saint)$/i;
+  const PLACE_PREP = new Set(['in', 'into', 'across', 'through', 'outside', 'inside', 'reached', 'visited', 'beyond', 'via', 'onto', 'leaving', 'entered', 'throughout', 'within']);
+  const PLACE_NOUN = new Set(('street road lane avenue square park river lake sea ocean bay island isle islands mountain mountains mount hill ' +
+    'hills valley forest wood woods city town village county castle palace hall house manor abbey church cathedral bridge station ' +
+    'harbor harbour point head cove beach coast falls inn tavern hotel school college university academy hospital airport port ' +
+    'tower gate market desert plains kingdom empire province district cross court gardens heath moor fields marsh creek canyon ' +
+    'ridge peak cape sound strait gulf channel quay pier wharf row place terrace crescent close drive way').split(' '));
+  const SPEECH_RE = new RegExp('^(?:' + TAG_VERBS + '|' + ACTION_VERBS + ')$');
+  const TAG_ONLY_RE = /^(?:said|asked|replied|answered|whispered|shouted|muttered|murmured|called|cried|snapped|yelled|hissed)$/;
+
+  function classifyNames(model, stats, gender) {
+    const score = new Map();
+    const get = (n) => { let s = score.get(n); if (!s) { s = { person: 0, place: 0 }; score.set(n, s); } return s; };
+    const sp = (a, b, S) => /^\s+$/.test(S.text.slice(a.e, b.s));
+    for (const S of model.sentences) {
+      const T = S.tokens;
+      for (let i = 0; i < T.length; i++) {
+        const t = T[i];
+        if (!t.cap || !stats.has(t.base)) continue;
+        const s = get(t.base);
+        const prev = T[i - 1], next = T[i + 1];
+        if (next && !t.poss && sp(t, next, S) && SPEECH_RE.test(next.lw)) s.person += 2;
+        if (prev && TAG_ONLY_RE.test(prev.lw) && sp(prev, t, S)) s.person += 2;
+        if (prev && prev.cap && TITLE_RE.test(prev.w)) s.person += 2;
+        if (t.poss && next && /^(eyes|hair|face|voice|hand|hands|mother|father|sister|brother|wife|husband|son|daughter|friend|smile|lips|mouth|shoulder|shoulders|arm|arms|head)$/.test(next.lw)) s.person += 1;
+        if (prev && !prev.cap && !t.poss && PLACE_PREP.has(prev.lw) && sp(prev, t, S)) s.place += 1.5;
+        if (next && next.cap && PLACE_NOUN.has(next.lw) && sp(t, next, S)) s.place += 3;
+      }
+    }
+    for (const n of gender.keys()) get(n).person += 3;
+    const type = new Map();
+    for (const [n, s] of score) {
+      if (s.person >= 2 && s.person >= s.place) type.set(n, 'person');
+      else if (s.place >= 2 && s.place > s.person) type.set(n, 'place');
+      else type.set(n, 'other');
+    }
+    return type;
+  }
+
+  // How sure we are of someone's pronouns: only "strong" genders are used to flag slips.
+  function strongGender(gender, n) {
+    const g = gender.get(n);
+    const t = gender.tally && gender.tally.get(n);
+    if (!g || !t) return null;
+    const w = t[g], l = t[g === 'he' ? 'she' : 'he'];
+    return w >= 4 && w >= l * 4 ? g : null;
+  }
+
+  // ------------------------------------------------------------------ pronoun slips
+
+  const SELF_VERBS = 'shook|nodded|tilted|bowed|lowered|cocked|clenched|unclenched|bit|chewed|licked|cleared|narrowed|rolled|' +
+    'squared|hunched|shrugged|pursed|furrowed|knitted|knit|gritted|craned|scratched|folded|crossed|uncrossed|puffed|wrinkled|' +
+    'arched|hung|scrunched|steepled|flexed|cracked|bobbed|ducked';
+  const BODY_PARTS = 'head|hair|eyes|eye|shoulders|shoulder|lip|lips|hands|hand|face|arms|arm|fists|fist|teeth|throat|chin|nose|' +
+    'brows|brow|eyebrows|eyebrow|forehead|neck|knuckles|fingers|jaw|cheeks|cheek|mouth|chest|legs|leg|ears|ear';
+
+  function pronounSlips(model, names, gender) {
+    const out = [];
+    const re1 = new RegExp('\\b([A-Z][A-Za-z\'’-]+)\\s+(?:[a-z]+ly\\s+)?(?:' + SELF_VERBS + ')\\s+(his|her)\\s+(?:[a-z]+\\s+)?(?:' + BODY_PARTS + ')\\b', 'g');
+    const re2 = /\b([A-Z][A-Za-z'’-]+)\s+((?:[a-z'’]+\s+){1,4}?)(himself|herself)\b/g;
+    for (const S of model.sentences) {
+      for (const re of [re1, re2]) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(S.text))) {
+          if (/['’]s$/.test(m[1]) || inDialogue(S, m.index)) continue;
+          const n = m[1];
+          if (!names.has(n)) continue;
+          if (re === re2 && /\b(her|him|them|me|us|you|it|to)\b/.test(m[2])) continue;
+          const g = strongGender(gender, n);
+          if (!g) continue;
+          const pron = (re === re1 ? m[2] : m[3]).toLowerCase();
+          const pg = /^(his|himself)$/.test(pron) ? 'he' : 'she';
+          if (pg === g) continue;
+          const pos = m.index + m[0].toLowerCase().lastIndexOf(pron);
+          out.push({ kind: 'Pronoun', sev: 'high', key: 'pron:' + n + ':' + S.ch + ':' + hash(S.text),
+            msg: `${n} is "${g}" everywhere else, but here it says "${pron}".`,
+            quotes: [makeQuote(S, pos, pos + pron.length)], owner: n });
+        }
+      }
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------------ point of view and tense
+
+  const VERB_BASES = ('say walk look turn run take smile nod open close stand sit go come see hear feel grab pull push step reach ' +
+    'glance stare shrug sigh laugh grin frown whisper shout call ask answer reply tell move lean pick put drop hold throw catch ' +
+    'start stop wait watch kiss hug climb fall jump drive pause return leave enter follow lift raise shake wipe rub touch slam ' +
+    'knock cross wave point slip notice wonder decide try begin keep give get make find hurry rush race wander head stumble ' +
+    'glare snap mutter murmur yell scream cry sob breathe swallow blink wince shiver tremble rise sink spin twist bend kneel ' +
+    'crouch sleep wake eat drink pour carry bring send write sing hide search grip squeeze shove toss stride storm march sprint ' +
+    'dash creep sneak tiptoe gasp groan whimper chuckle giggle smirk scowl beam peer gaze sniff blush flinch hesitate nudge ' +
+    'tap stroke kick punch slap hit clutch wrap fold settle shift roll lower lift wade swim crawl fling hurl hand guide lead').split(' ');
+  const VERB_SET = new Set(VERB_BASES);
+  const PRESENT3 = new Map();
+  for (const b of VERB_BASES) {
+    let f;
+    if (b === 'go') f = 'goes';
+    else if (/(s|sh|ch|x|z)$/.test(b)) f = b + 'es';
+    else if (/[^aeiou]y$/.test(b)) f = b.slice(0, -1) + 'ies';
+    else f = b + 's';
+    PRESENT3.set(f, b);
+  }
+  const IRREG_PAST = new Set(('said ran took stood sat went came saw heard felt held threw caught began kept gave got made found ' +
+    'rose sank spun bent knelt slept woke ate drank brought sent wrote sang hid fell drove left told shook struck swung wore tore ' +
+    'broke chose spoke stole froze led fed met paid sold bought taught fought sought won lost grew drew flew blew dug stuck swept ' +
+    'wept crept leapt strode understood forgot forgave slid strode lit sprang stank swam bit').split(' '));
+  const PAST_AUX = new Set(['was', 'were', 'had', 'did']);
+  const PRES_AUX3 = new Set(['is', 'has', 'does']);
+  const PRES_AUX = new Set(['am', 'are', 'have', 'do']);
+  const ADVS = new Set(('just still now then also always never often suddenly slowly quickly finally only already even simply ' +
+    'quietly softly gently carefully nearly almost barely immediately instantly abruptly').split(' '));
+  const HABIT = /\b(always|usually|every|often|never|sometimes|whenever|each (?:time|morning|night|day)|generally|tends? to|nowadays|these days|still)\b/i;
+  const SUBJ = new Set(['he', 'she', 'i', 'we', 'they', 'it']);
+  const SAME_PAST = new Set(['put', 'hit', 'set', 'cut', 'let', 'read', 'shut', 'quit', 'cast', 'spread', 'hurt', 'burst', 'cost', 'bet', 'thrust']);
+  const ASIDE = new Set(['say', 'suppose', 'think', 'know', 'believe', 'wonder', 'guess', 'mean', 'see', 'hope', 'fear', 'trust', 'tell', 'confess', 'admit', 'remember', 'find', 'feel', 'take', 'ask', 'call']);
+  const FIRST_PERSON = new Set(['i', 'me', 'my', 'mine', 'myself']);
+
+  function isPastAction(w) {
+    if (IRREG_PAST.has(w)) return true;
+    if (!/ed$/.test(w) || w.length < 4) return false;
+    const stems = [w.slice(0, -2), w.slice(0, -1), w.slice(0, -3), w.replace(/ied$/, 'y')];
+    return stems.some((s) => VERB_SET.has(s));
+  }
+
+  function povTense(model, chapters, names) {
+    const ch = chapters.map(() => ({ fp: 0, words: 0, past: 0, pres: 0, fpSent: [], presSent: [], pastSent: [] }));
+    for (const S of model.sentences) {
+      const C = ch[S.ch];
+      const T = S.tokens.filter((t) => !inDialogue(S, t.s));
+      if (!T.length) continue;
+      C.words += T.length;
+      const fpTok = T.find((t) => FIRST_PERSON.has(t.lw) && (t.lw !== 'i' || t.w === 'I'));
+      C.fp += T.filter((t) => FIRST_PERSON.has(t.lw) && (t.lw !== 'i' || t.w === 'I')).length;
+      if (fpTok) C.fpSent.push({ S, t: fpTok });
+      let past = 0, pres = 0, presTok = null, pastTok = null;
+      for (let i = 0; i < T.length - 1; i++) {
+        const t = T[i];
+        const isName = t.cap && names.has(t.base) && !t.poss;
+        if (!SUBJ.has(t.lw) && !isName) continue;
+        if (t.lw === 'i' && t.w !== 'I') continue;
+        let j = i + 1;
+        if (T[j] && (ADVS.has(T[j].lw) || (/ly$/.test(T[j].lw) && T[j].lw.length > 4))) j++;
+        const v = T[j];
+        if (!v || /[.,;:!?"“”—()]/.test(S.text.slice(t.e, v.s))) continue;
+        const w = v.lw;
+        const third = t.lw === 'he' || t.lw === 'she' || t.lw === 'it' || isName;
+        if (PAST_AUX.has(w) || isPastAction(w)) {
+          past++;
+          if (!PAST_AUX.has(w) && t.lw !== 'it' && !pastTok) pastTok = v;
+        } else if (third && PRESENT3.has(w)) {
+          pres++;
+          if (t.lw !== 'it' && !presTok) presTok = v;
+        } else if (third && PRES_AUX3.has(w)) pres++;
+        else if (!third && (PRES_AUX.has(w) || VERB_SET.has(w)) && !SAME_PAST.has(w)) {
+          pres++;
+          // "I say", "I suppose": a narrator's aside, not a slip.
+          if (VERB_SET.has(w) && !presTok && !(/^(i|we|they|you)$/.test(t.lw) && ASIDE.has(w))) presTok = v;
+        }
+      }
+      C.past += past;
+      C.pres += pres;
+      if (presTok && !HABIT.test(S.text)) C.presSent.push({ S, tok: presTok, mixed: past > 0 });
+      if (pastTok && pres > 0) C.pastSent.push({ S, tok: pastTok, mixed: true });
+    }
+    const issues = [];
+    const info = ch.map((C) => {
+      let pov = null, tense = null;
+      if (C.words >= 120) {
+        const r = C.fp / C.words;
+        pov = r > 0.02 ? 'first' : r < 0.01 ? 'third' : 'mixed';
+      }
+      if (C.past + C.pres >= 8) tense = C.past >= C.pres * 5 ? 'past' : C.pres >= C.past * 5 ? 'present' : 'mixed';
+      return { pov, tense };
+    });
+    // Only flag a stray "I" when the whole book is told in the third person.
+    const bookFp = ch.reduce((n, C) => n + C.fp, 0) / Math.max(1, ch.reduce((n, C) => n + C.words, 0));
+    // Short or unclear chapters take the tense of the book as a whole.
+    const bookPast = ch.reduce((n, C) => n + C.past, 0), bookPres = ch.reduce((n, C) => n + C.pres, 0);
+    const bookTense = bookPast >= bookPres * 5 ? 'past' : bookPres >= bookPast * 5 ? 'present' : null;
+    ch.forEach((C, i) => {
+      const { pov } = info[i];
+      const tense = info[i].tense && info[i].tense !== 'mixed' ? info[i].tense : (C.past + C.pres < 30 ? bookTense : null);
+      if (pov === 'third' && bookFp < 0.003) {
+        for (const { S, t } of C.fpSent.slice(0, 2)) {
+          const thought = /\b(thought|wondered|told (?:him|her)self|said to (?:him|her)self)\b/i.test(S.text) || /^\s*(Dear|PS|P\.S\.)\b/.test(S.text);
+          issues.push({ kind: 'Point of view', sev: thought ? 'low' : 'medium', key: 'pov:' + i + ':' + hash(S.text),
+            msg: `"${t.w}" appears outside dialogue in a chapter told in the third person.`,
+            note: 'If this is a character\'s thought, a letter or a quotation, you can ignore it.',
+            quotes: [makeQuote(S, t.s, t.e)] });
+        }
+      }
+      if (tense === 'past') {
+        for (const { S, tok, mixed } of C.presSent.slice(0, 3)) {
+          issues.push({ kind: 'Tense', sev: 'medium', key: 'tense:' + i + ':' + hash(S.text),
+            msg: mixed ? `This sentence switches from the past tense to the present ("${tok.w}") halfway through.`
+              : `This sentence is in the present tense ("${tok.w}") but the chapter is told in the past tense.`,
+            quotes: [makeQuote(S, tok.s, tok.e)] });
+        }
+      } else if (tense === 'present') {
+        for (const { S, tok } of C.pastSent.slice(0, 3)) {
+          issues.push({ kind: 'Tense', sev: 'medium', key: 'tense:' + i + ':' + hash(S.text),
+            msg: `This sentence switches from the present tense to the past ("${tok.w}") in a chapter told in the present tense.`,
+            quotes: [makeQuote(S, tok.s, tok.e)] });
+        }
+      }
+    });
+    // A chapter whose point of view or tense differs from nearly all the others.
+    for (const field of ['pov', 'tense']) {
+      if (field === 'pov' && bookFp >= 0.003 && bookFp <= 0.02) continue; // a narrator who drifts in and out
+      const vals = info.map((x) => x[field]).filter((v) => v && v !== 'mixed');
+      if (vals.length < 4) continue;
+      const counts = {};
+      vals.forEach((v) => { counts[v] = (counts[v] || 0) + 1; });
+      const [main, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+      if (n < vals.length * 0.75) continue;
+      info.forEach((x, i) => {
+        const v = x[field];
+        if (!v || v === 'mixed' || v === main) return;
+        const label = field === 'pov' ? { first: 'the first person ("I")', third: 'the third person' } : { past: 'the past tense', present: 'the present tense' };
+        const S = model.sentences.find((s) => s.ch === i);
+        issues.push({ kind: field === 'pov' ? 'Point of view' : 'Tense', sev: 'low', key: field + '-ch:' + i + ':' + v,
+          msg: `${chapters[i].title} is told in ${label[v]}, but most chapters use ${label[main]}.`,
+          note: 'Fine if you switch on purpose, for example between narrators.', quotes: S ? [makeQuote(S, 0, 0)] : [] });
+      });
+    }
+    return { issues, info };
+  }
+
+  // ------------------------------------------------------------------ more character details
+
+  const SIDE_PARTS = 'cheek|eyebrow|brow|forehead|chin|jaw|jawline|neck|hand|wrist|arm|forearm|shoulder|chest|back|lip|temple|ear|knuckles|palm|thigh|leg|knee|ankle|face|throat|eye|calf|hip|side|collarbone|shin|foot';
+  const MARK_RE = new RegExp('\\b(scar|scars|tattoo|tattoos|birthmark|mole)\\b[^.;!?"“”]{0,40}?\\b(?:on|across|along|over|down|under|above|at|from|beneath|below)\\s+(his|her|my|the)\\s+(?:(left|right)\\s+)?(' + SIDE_PARTS + ')\\b', 'gi');
+  const ACCENT_RE = /\b([A-Z][a-z]+(?:[- ][A-Z][a-z]+)?)\s+accent\b/g;
+  const ACCENT_NOT = new Set(['thick', 'heavy', 'soft', 'broad', 'strong', 'faint', 'slight', 'lilting', 'clipped', 'posh', 'harsh', 'funny', 'odd', 'strange', 'his', 'her', 'the', 'an', 'a']);
+  const BUILD_WORDS = { tall: ['tall', 'towering', 'lanky'], short: ['short', 'petite', 'tiny', 'diminutive'],
+    slim: ['thin', 'slim', 'skinny', 'slender', 'slight', 'wiry', 'lanky', 'scrawny', 'gaunt'],
+    heavy: ['plump', 'stout', 'fat', 'heavyset', 'burly', 'stocky', 'portly', 'chubby', 'overweight', 'rotund'] };
+  const BUILD_RE = new RegExp('\\b(he|she|I|[A-Z][a-z\'’]+)\\s+(?:was|is|stood|looked|seemed|had always been|had grown|grew)\\s+' +
+    '(?:(?:very|quite|rather|so|too|unusually|remarkably|fairly|surprisingly|incredibly|extremely)\\s+)?(?:(?:tall|short|thin|slim)\\s+and\\s+)?(' +
+    [...new Set(Object.values(BUILD_WORDS).flat())].join('|') + ')\\b(?![-\\w])(?!\\s+(?:of|with|on|for|to)\\b)', 'g');
+  const THING_COLOURS = { red: ['red', 'scarlet', 'crimson', 'maroon', 'burgundy', 'cherry'], blue: ['blue', 'navy', 'azure', 'cobalt'],
+    green: ['green', 'olive', 'emerald'], yellow: ['yellow', 'mustard'], orange: ['orange'], black: ['black', 'jet', 'ebony'],
+    white: ['white', 'cream', 'ivory'], grey: ['grey', 'gray', 'silver', 'silvery', 'gunmetal'], brown: ['brown', 'tan', 'beige', 'chestnut', 'bay', 'chocolate'],
+    gold: ['gold', 'golden'], purple: ['purple', 'violet'], pink: ['pink'] };
+  const THING_IDX = colourIndex(THING_COLOURS);
+  const BRANDS = 'Ford|Volvo|Toyota|Mini|Jaguar|Mercedes|BMW|Fiat|Volkswagen|Beetle|Cadillac|Porsche|Honda|Chevy|Chevrolet|Buick|Subaru|Nissan|Audi|Vauxhall|Peugeot|Renault|Citroen|Skoda|Hyundai|Kia|Tesla|Mustang|Corvette';
+  const THING_NOUNS = 'car|truck|van|pickup|jeep|motorbike|motorcycle|bike|bicycle|scooter|boat|horse|mare|stallion|pony|dog|cat|sword|ring|necklace|pendant|locket|bracelet|umbrella';
+  const THING_RE = new RegExp('\\b(his|her|my|[A-Z][a-z]+[\'’]s)\\s+(?:(?:old|new|battered|beat-up|shiny|little|big|trusty|beloved|vintage|rusty|rusted|ancient|ugly|beautiful|tiny|huge|faithful|dented|sleek|precious|favourite|favorite)\\s+)?(' +
+    [...THING_IDX.keys()].join('|') + ')\\s+(?:(?:old|new|vintage|sports|family|estate|police|rusty|little)\\s+)?(' + THING_NOUNS + '|' + BRANDS + ')\\b', 'g');
+  const BRAND_RE = new RegExp('^(?:' + BRANDS + ')$');
+  const GLASSES_RE = /\b(his|her|my|[A-Z][a-z]+['’]s)\s+(?:(?:reading|thick|wire-rimmed|horn-rimmed|round|dark|half-moon|new|old|gold-rimmed|steel-rimmed)\s+)?(glasses|spectacles|specs)\b(?!\s+of)/g;
+  const NO_GLASSES_RE = /\b(?:never|didn['’]t|did not|doesn['’]t|does not|don['’]t|no longer|hadn['’]t ever)\s+(?:wore|wear|worn|need|needed)\s+(?:glasses|spectacles)\b|\b(?:perfect|twenty-twenty|20\/20) (?:eyesight|vision)\b/gi;
+
+  function tokenAt(S, pos) {
+    let k = S.tokens.findIndex((t) => t.s >= pos);
+    return k < 0 ? S.tokens.length - 1 : k;
+  }
+
+  function extractFeatures(model, names, gender) {
+    const out = [];
+    const add = (r) => { if (r.owner) out.push(r); };
+    for (const S of model.sentences) {
+      let m;
+      // Scars, tattoos, birthmarks
+      MARK_RE.lastIndex = 0;
+      while ((m = MARK_RE.exec(S.text))) {
+        if (inDialogue(S, m.index)) continue;
+        const kind = m[1].toLowerCase().replace(/s$/, '');
+        const partPos = m.index + m[0].length - m[4].length;
+        let own = null;
+        if (m[2].toLowerCase() === 'the') own = subjectOwner(model, S, tokenAt(S, m.index), names, gender);
+        else own = resolveOwner(model, S, tokenAt(S, partPos), names, gender);
+        if (!own) continue;
+        const side = m[3] ? m[3].toLowerCase() : null, part = m[4].toLowerCase();
+        add({ owner: own.owner, field: 'marks', kind, part, side,
+          value: kind + ': ' + (side ? side + ' ' : '') + part, conf: own.conf, S, s: m.index, e: m.index + m[0].length });
+      }
+      // Accents
+      ACCENT_RE.lastIndex = 0;
+      while ((m = ACCENT_RE.exec(S.text))) {
+        const v = m[1];
+        if (ACCENT_NOT.has(v.toLowerCase()) || inDialogue(S, m.index)) continue;
+        const idx = tokenAt(S, m.index);
+        let own = resolveOwner(model, S, idx, names, gender);
+        if (!own && /\b(?:a|an)\s+(?:\w+\s+)?$/i.test(S.text.slice(0, m.index))) own = subjectOwner(model, S, idx, names, gender);
+        if (!own) continue;
+        add({ owner: own.owner, field: 'accent', value: v, conf: own.conf, S, s: m.index, e: m.index + m[0].length });
+      }
+      // Height and build
+      BUILD_RE.lastIndex = 0;
+      while ((m = BUILD_RE.exec(S.text))) {
+        if (inDialogue(S, m.index)) continue;
+        const subj = m[1];
+        let own = null;
+        if (/^(he|she|I)$/.test(subj)) own = subjectOwner(model, S, tokenAt(S, m.index + m[0].length - m[2].length), names, gender);
+        else if (names.has(subj)) own = { owner: subj, conf: 'high' };
+        if (!own) continue;
+        const word = m[2].toLowerCase();
+        for (const [dim, fams] of [['height', ['tall', 'short']], ['build', ['slim', 'heavy']]]) {
+          const fam = fams.find((f) => BUILD_WORDS[f].includes(word));
+          if (fam) add({ owner: own.owner, field: dim === 'height' ? 'stature' : 'build', fam, value: word, conf: own.conf, S, s: m.index, e: m.index + m[0].length });
+        }
+      }
+      // Things people own: "Dr Ashby's green car"
+      THING_RE.lastIndex = 0;
+      while ((m = THING_RE.exec(S.text))) {
+        const who = m[1];
+        let own = null;
+        const colourPos = m.index + m[0].indexOf(m[2], who.length);
+        if (/['’]s$/.test(who)) { const n = who.replace(/['’]s$/, ''); if (names.has(n)) own = { owner: n, conf: 'high' }; }
+        else if (!inDialogue(S, m.index)) own = resolveOwner(model, S, tokenAt(S, colourPos), names, gender);
+        if (!own) continue;
+        const noun = BRAND_RE.test(m[3]) ? 'car' : m[3].toLowerCase();
+        add({ owner: own.owner, field: 'things', noun, colour: m[2].toLowerCase(), fams: [...THING_IDX.get(m[2].toLowerCase())], value: m[2].toLowerCase() + ' ' + (BRAND_RE.test(m[3]) ? m[3] : noun),
+          conf: own.conf, S, s: m.index, e: m.index + m[0].length });
+      }
+      // Glasses
+      GLASSES_RE.lastIndex = 0;
+      while ((m = GLASSES_RE.exec(S.text))) {
+        if (/\b(?:wine|beer|champagne|drinking|empty|full|shot|their|two)\s+$/i.test(S.text.slice(0, m.index + m[1].length + 1))) continue;
+        let own = null;
+        if (/['’]s$/.test(m[1])) { const n = m[1].replace(/['’]s$/, ''); if (names.has(n)) own = { owner: n, conf: 'high' }; }
+        else if (!inDialogue(S, m.index)) own = resolveOwner(model, S, tokenAt(S, m.index + m[0].length - m[2].length), names, gender);
+        if (!own) continue;
+        add({ owner: own.owner, field: 'glasses', value: 'wears glasses', wears: true, conf: own.conf, S, s: m.index, e: m.index + m[0].length });
+      }
+      NO_GLASSES_RE.lastIndex = 0;
+      while ((m = NO_GLASSES_RE.exec(S.text))) {
+        if (inDialogue(S, m.index)) continue;
+        const own = subjectOwner(model, S, tokenAt(S, m.index), names, gender);
+        if (!own) continue;
+        add({ owner: own.owner, field: 'glasses', value: 'no glasses', wears: false, conf: own.conf, S, s: m.index, e: m.index + m[0].length });
+      }
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------------ family and relationships
+
+  const REL_WORDS = 'mother|father|mum|mom|dad|sister|brother|son|daughter|wife|husband|aunt|uncle|cousin|grandmother|grandfather|grandma|grandpa|granny|niece|nephew|fiancée|fiancé|fiancee|fiance|boyfriend|girlfriend|stepmother|stepfather|stepsister|stepbrother|stepson|stepdaughter';
+  const REL_ADJ = '(?:(?:older|younger|little|big|elder|baby|late|dear|twin|beloved|only|eldest|youngest|new)\\s+)?';
+  const NM = "([A-Z][a-z]+(?:-[A-Z][a-z]+)?)";
+  const REL_NORM = { mum: 'mother', mom: 'mother', dad: 'father', grandma: 'grandmother', granny: 'grandmother', grandpa: 'grandfather', fiancee: 'fiancée', fiance: 'fiancé' };
+  const PARTNER = new Set(['wife', 'husband', 'fiancé', 'fiancée', 'boyfriend', 'girlfriend']);
+  const UNIQUE_REL = new Set(['mother', 'father', 'wife', 'husband', 'stepmother', 'stepfather']);
+  const FEMALE_REL = new Set(['mother', 'sister', 'daughter', 'wife', 'aunt', 'grandmother', 'niece', 'girlfriend', 'fiancée', 'stepmother', 'stepsister', 'stepdaughter']);
+  const MALE_REL = new Set(['father', 'brother', 'son', 'husband', 'uncle', 'grandfather', 'nephew', 'boyfriend', 'fiancé', 'stepfather', 'stepbrother', 'stepson']);
+
+  function extractRelations(model, names, gender) {
+    const out = [];
+    const ok = (n) => n && !CAP_STOP.has(n) && !WEEKDAYS.includes(n.toLowerCase()) && !MONTHS.includes(n.toLowerCase());
+    const res = [
+      { re: new RegExp('\\b' + NM + "['’]s\\s+" + REL_ADJ + '(' + REL_WORDS + '),?\\s+' + NM + "\\b(?!['’])", 'g'), o: 1, r: 2, b: 3 },
+      { re: new RegExp('\\b' + NM + ',\\s+' + NM + "['’]s\\s+" + REL_ADJ + '(' + REL_WORDS + ')\\b', 'g'), b: 1, o: 2, r: 3 },
+      { re: new RegExp('\\b' + NM + '\\s+(?:was|is)\\s+' + NM + "['’]s\\s+" + REL_ADJ + '(' + REL_WORDS + ')\\b', 'g'), b: 1, o: 2, r: 3 },
+      { re: new RegExp('\\b(his|her|my)\\s+' + REL_ADJ + '(' + REL_WORDS + '),?\\s+' + NM + "\\b(?!['’])", 'g'), p: 1, r: 2, b: 3 },
+      { re: new RegExp('\\b' + NM + ',\\s+(his|her|my)\\s+' + REL_ADJ + '(' + REL_WORDS + ')\\b', 'g'), b: 1, p: 2, r: 3 }
+    ];
+    for (const S of model.sentences) {
+      for (const R of res) {
+        R.re.lastIndex = 0;
+        let m;
+        while ((m = R.re.exec(S.text))) {
+          const b = m[R.b];
+          if (!ok(b) || inDialogue(S, m.index)) continue;
+          let owner = null, conf = 'high';
+          if (R.o) { owner = m[R.o]; if (!names.has(owner)) continue; }
+          else {
+            const p = m[R.p].toLowerCase();
+            if (p === 'my') owner = 'Narrator';
+            else {
+              // The person "his/her" refers to: a name earlier in the sentence (not the one being described), or just before.
+              const g = p === 'his' ? 'he' : 'she';
+              const pPos = m.index + m[0].indexOf(m[R.p], R.p > R.b ? m[R.b].length : 0);
+              const cands = nameTokens(S, names).filter((i) => S.tokens[i].s < pPos && S.tokens[i].base !== b).map((i) => S.tokens[i].base).reverse();
+              for (let k = S.idx - 1; k >= 0 && k >= S.idx - 3 && model.sentences[k].ch === S.ch; k--) {
+                const P = model.sentences[k];
+                cands.push(...nameTokens(P, names).map((i) => P.tokens[i].base).filter((n) => n !== b).reverse());
+              }
+              owner = cands.find((n) => gender.get(n) === g) || (new Set(cands).size === 1 && !gender.has(cands[0]) ? cands[0] : null);
+              conf = 'medium';
+            }
+            if (!owner || inDialogue(S, m.index)) continue;
+          }
+          if (owner === b) continue;
+          let rel = m[R.r].toLowerCase();
+          rel = REL_NORM[rel] || rel;
+          out.push({ owner, rel, b, conf, S, s: m.index, e: m.index + m[0].length });
+        }
+      }
+    }
+    return out;
+  }
+
+  function relationIssues(rels, gender, chapters) {
+    const issues = [];
+    const t = (x) => chapters[x.S.ch].title;
+    const who = (o) => (o === 'Narrator' ? 'the narrator' : o);
+    // Same relation, different person: "Katherine's husband, Walter" then "Katherine's husband, Albert".
+    const byRel = new Map();
+    const byPair = new Map();
+    for (const r of rels) {
+      if (UNIQUE_REL.has(r.rel)) { const k = r.owner + '|' + r.rel; if (!byRel.has(k)) byRel.set(k, []); byRel.get(k).push(r); }
+      const k2 = r.owner + '|' + r.b;
+      if (!byPair.has(k2)) byPair.set(k2, []);
+      byPair.get(k2).push(r);
+    }
+    for (const [k, list] of byRel) {
+      const people = [...new Set(list.map((r) => r.b))];
+      if (people.length < 2) continue;
+      const firsts = people.map((p) => list.find((r) => r.b === p));
+      issues.push({ kind: 'Family', sev: 'high', key: 'rel1:' + k + ':' + people.sort().join(','),
+        msg: `${cap(who(firsts[0].owner))}'s ${firsts[0].rel} is called ` + firsts.map((r) => `${r.b} (${t(r)})`).join(' and ') + '.',
+        note: 'Fine if they remarried or there are two of them.', quotes: firsts.slice(0, 3).map((r) => makeQuote(r.S, r.s, r.e)), owner: firsts[0].owner });
+    }
+    // Same two people, different relation: "Elias, Mara's father" then "Mara's uncle Elias".
+    for (const [k, list] of byPair) {
+      const relsHere = [...new Set(list.map((r) => (PARTNER.has(r.rel) ? 'partner' : r.rel.replace(/^step/, ''))))];
+      if (relsHere.length < 2) continue;
+      const firsts = [...new Set(list.map((r) => r.rel))].map((rel) => list.find((r) => r.rel === rel));
+      issues.push({ kind: 'Family', sev: 'high', key: 'rel2:' + k + ':' + relsHere.sort().join(','),
+        msg: `${firsts[0].b} is called ${who(firsts[0].owner)}'s ` + firsts.map((r) => `${r.rel} (${t(r)})`).join(' and ') + '.',
+        quotes: firsts.slice(0, 3).map((r) => makeQuote(r.S, r.s, r.e)), owner: firsts[0].b });
+    }
+    // A relation that doesn't fit the person's pronouns: "Tom" called someone's sister.
+    const seen = new Set();
+    for (const r of rels) {
+      const g = strongGender(gender, r.b);
+      if (!g || seen.has(r.b + r.rel)) continue;
+      if ((g === 'he' && FEMALE_REL.has(r.rel)) || (g === 'she' && MALE_REL.has(r.rel))) {
+        seen.add(r.b + r.rel);
+        issues.push({ kind: 'Family', sev: 'medium', key: 'rel3:' + r.b + ':' + r.rel,
+          msg: `${r.b} is called ${who(r.owner)}'s ${r.rel}, but is "${g}" everywhere else.`, quotes: [makeQuote(r.S, r.s, r.e)], owner: r.b });
+      }
+    }
+    return issues;
+  }
+
+  // ------------------------------------------------------------------ story calendar
+
+  // Northern-hemisphere seasons each month can belong to.
+  const MONTH_SEASONS = [['winter'], ['winter'], ['winter', 'spring'], ['spring'], ['spring'], ['spring', 'summer'], ['summer'],
+    ['summer'], ['summer', 'autumn'], ['autumn'], ['autumn', 'winter'], ['winter', 'autumn']];
+  const HOLIDAYS = [
+    { re: /christmas eve/i, name: 'Christmas Eve', month: 11, day: 24 },
+    { re: /christmas(?: day| morning)?/i, name: 'Christmas', month: 11, day: 25 },
+    { re: /new year['’]s eve/i, name: "New Year's Eve", month: 11, day: 31 },
+    { re: /new year['’]s day/i, name: "New Year's Day", month: 0, day: 1 },
+    { re: /halloween/i, name: 'Halloween', month: 9, day: 31 },
+    { re: /valentine['’]s day/i, name: "Valentine's Day", month: 1, day: 14 },
+    { re: /bonfire night|guy fawkes night/i, name: 'Bonfire Night', month: 10, day: 5 },
+    { re: /easter(?: sunday| morning| day)?/i, name: 'Easter', months: [2, 3] },
+    { re: /thanksgiving/i, name: 'Thanksgiving', months: [9, 10] },
+    { re: /midsummer(?:['’]s)?(?: eve| day)?/i, name: 'Midsummer', months: [5] }
+  ];
+  const DAY = 86400000;
+  const dayNum = (y, m, d) => Math.floor(Date.UTC(y, m, d) / DAY);
+  const fromDay = (n) => { const d = new Date(n * DAY); return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate(), wd: d.getUTCDay() }; };
+  const fmtDay = (n) => { const x = fromDay(n); return `${cap(WEEKDAYS[x.wd]).slice(0, 3)} ${x.d} ${cap(MONTHS[x.m]).slice(0, 3)} ${x.y}`; };
+  const FLASHBACK = /\b(remembered|recalled|years (?:ago|before|earlier)|as a (?:child|boy|girl|teenager)|back then|in those days|used to|long ago|once upon|when (?:he|she|I|they) (?:was|were) (?:young|little|a child|a boy|a girl|small))\b/i;
+
+  function storyCalendar(model, chapters) {
+    const WD = WEEKDAYS.join('|'), MO = MONTHS.join('|');
+    const fullDate = new RegExp('\\b(?:(' + WD + '),?\\s+)?(?:(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(' + MO + ')|(' + MO + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?)(?:,?\\s+(\\d{4}))?\\b', 'gi');
+    const yearOnly = /\b(?:in|the (?:spring|summer|autumn|fall|winter) of|it was|that was)\s+(1[5-9]\d\d|20\d\d|21\d\d)\b/gi;
+    const jumpRe = new RegExp('\\b(?:the\\s+)?(?:next|following)\\s+(day|morning|afternoon|evening|night|week|month|year)\\b|\\bthe day after\\b|\\b(' + NUM_WORD + '|a|one|a few|several)\\s+(days?|weeks?|months?|years?)\\s+later\\b', 'gi');
+    const seasonRe = /\b(?:that|this|the|in|early|late|mid|midst of|middle of|height of|depths of|dead of)\s+(spring|summer|autumn|winter)\b(?!\s+(?:coat|clothes|sun|sky|light|air|storm|storms|months|term|holidays?|wind|winds|jacket|dress|boots|uniform|evening|evenings|morning|mornings|day|days|night|nights|of\s+(?:\d{4}|life|his|her|my|their)))/gi;
+    const holidayRe = /\b(?:it was|on|that|this)\s+(christmas eve|christmas(?: day| morning)?|new year['’]s (?:eve|day)|halloween|valentine['’]s day|bonfire night|guy fawkes night|easter(?: sunday| morning| day)?|thanksgiving|midsummer(?:['’]s)?(?: eve| day)?)\b/gi;
+    const issues = [];
+    const st = { date: null, exact: false, approx: false, year: null, anchorCh: -1, monthHint: null };
+    const yearAt = new Array(model.sentences.length).fill(null);
+    const cal = chapters.map(() => ({ first: null, last: null, exactFirst: false, year: null }));
+    let lastCh = -1;
+    const setDate = (S, n, why) => {
+      if (st.date != null && n < st.date - 1 && !FLASHBACK.test(S.text)) {
+        issues.push({ kind: 'Time goes backwards', sev: 'medium', key: 'back:' + S.ch + ':' + hash(S.text),
+          msg: `The story has already reached ${fmtDay(st.date)} (${chapters[st.dateCh].title}), but here it is ${fmtDay(n)}, which is earlier.`,
+          note: 'If this is a flashback, you can ignore it.', quotes: [why] });
+      }
+      st.date = n; st.exact = true; st.approx = false; st.year = fromDay(n).y; st.anchorCh = S.ch; st.dateCh = S.ch; st.dateIdx = S.idx;
+    };
+    for (const S of model.sentences) {
+      if (S.ch !== lastCh) { st.exact = false; st.monthHint = null; lastCh = S.ch; }
+      const flash = FLASHBACK.test(S.text);
+      const events = [];
+      let m;
+      if (!flash) {
+        fullDate.lastIndex = 0;
+        while ((m = fullDate.exec(S.text))) {
+          if (inDialogue(S, m.index)) continue;
+          const monName = m[3] || m[4];
+          if (!/^[A-Z]/.test(monName)) continue;
+          events.push({ pos: m.index, type: 'date', m });
+        }
+        yearOnly.lastIndex = 0;
+        // A year sets the story's "now" unless it's about something else: a birth, a death, a building...
+        const otherYear = /\b(born|died|married|since|until|before|after|founded|built|opened|closed|in the year|graduated|moved)\b/i.test(S.text);
+        while ((m = yearOnly.exec(S.text))) if (!otherYear && !inDialogue(S, m.index)) events.push({ pos: m.index, type: 'year', y: +m[1] });
+        jumpRe.lastIndex = 0;
+        while ((m = jumpRe.exec(S.text))) if (!inDialogue(S, m.index)) events.push({ pos: m.index, type: 'jump', m });
+        holidayRe.lastIndex = 0;
+        while ((m = holidayRe.exec(S.text))) if (!inDialogue(S, m.index)) events.push({ pos: m.index, type: 'holiday', m });
+        const wdRe = new RegExp('\\b(' + WD + ')\\b', 'gi');
+        while ((m = wdRe.exec(S.text))) if (/^[A-Z]/.test(m[1]) && !inDialogue(S, m.index)) events.push({ pos: m.index, type: 'weekday', d: WEEKDAYS.indexOf(m[1].toLowerCase()) });
+        seasonRe.lastIndex = 0;
+        while ((m = seasonRe.exec(S.text))) if (!inDialogue(S, m.index)) events.push({ pos: m.index, type: 'season', m });
+      }
+      events.sort((a, b) => a.pos - b.pos);
+      let datedHere = false;
+      for (const ev of events) {
+        const q = () => makeQuote(S, ev.pos, ev.pos + (ev.m ? ev.m[0].length : 4));
+        if (ev.type === 'date') {
+          const mm = ev.m;
+          const mon = MONTHS.indexOf((mm[3] || mm[4]).toLowerCase());
+          const day = +(mm[2] || mm[5]);
+          st.monthHint = { m: mon, idx: S.idx };
+          if (day < 1 || day > (mon === 1 ? 29 : MONTH_DAYS[mon])) continue; // impossible dates are reported elsewhere
+          let y = mm[6] ? +mm[6] : null;
+          if (y == null) {
+            if (st.year == null) continue;
+            y = st.year;
+            if (st.date != null && dayNum(y, mon, day) < st.date - 1) y++; // "the following March"
+          }
+          const n = dayNum(y, mon, day);
+          if (fromDay(n).m !== mon) continue;
+          setDate(S, n, q());
+          datedHere = true;
+          if (mm[1]) { /* weekday given with the date: checked by the timeline check */ }
+        } else if (ev.type === 'year') {
+          if (st.date == null || fromDay(st.date).y !== ev.y) { st.year = ev.y; st.anchorCh = S.ch; if (st.date != null) { st.date = dayNum(ev.y, 0, 1); st.exact = false; st.approx = true; st.dateCh = S.ch; } }
+        } else if (ev.type === 'holiday') {
+          const h = HOLIDAYS.find((x) => x.re.test(ev.m[1]));
+          if (!h) continue;
+          const known = st.date != null && (st.exact || datedHere) && S.idx - (st.dateIdx || 0) <= 40 ? fromDay(st.date).m
+            : st.monthHint && S.idx - st.monthHint.idx <= 30 ? st.monthHint.m : null;
+          const okMonths = h.months || [h.month];
+          if (known != null && !okMonths.includes(known)) {
+            issues.push({ kind: 'Season', sev: 'medium', key: 'hol:' + S.ch + ':' + hash(S.text),
+              msg: `It's ${h.name} here, but the story is in ${cap(MONTHS[known])}.`, quotes: [q()] });
+          }
+          if (h.day && st.year != null) setDate(S, dayNum(st.date != null && fromDay(st.date).m > h.month ? st.year + 1 : st.year, h.month, h.day), q());
+        } else if (ev.type === 'jump' && st.date != null) {
+          const mm = ev.m;
+          let days = 1, approx = false;
+          if (mm[1]) { const u = mm[1].toLowerCase(); days = u === 'week' ? 7 : u === 'month' ? 30 : u === 'year' ? 365 : 1; approx = u === 'month' || u === 'year'; }
+          else if (mm[3]) {
+            const nRaw = mm[2].toLowerCase();
+            const n = /^(a|one)$/.test(nRaw) ? 1 : /few|several/.test(nRaw) ? 3 : parseNum(nRaw) || 1;
+            const u = mm[3].toLowerCase().replace(/s$/, '');
+            days = n * (u === 'week' ? 7 : u === 'month' ? 30 : u === 'year' ? 365 : 1);
+            approx = u === 'month' || u === 'year' || /few|several/.test(nRaw);
+          }
+          st.date += days;
+          st.dateCh = S.ch;
+          if (approx) { st.approx = true; st.exact = false; }
+          if (days >= 60) st.anchorCh = -99; // a long jump: earlier years are no longer reliable for ages
+          st.year = fromDay(st.date).y;
+        } else if (ev.type === 'weekday' && st.date != null) {
+          const cur = fromDay(st.date).wd;
+          if (!st.exact || !datedHere) { st.date += (ev.d - cur + 7) % 7; st.dateCh = S.ch; }
+        } else if (ev.type === 'season') {
+          const season = ev.m[1].toLowerCase();
+          const known = st.date != null && st.exact && S.idx - (st.dateIdx || 0) <= 40 && st.dateCh === S.ch ? fromDay(st.date).m
+            : st.monthHint && S.idx - st.monthHint.idx <= 30 ? st.monthHint.m : null;
+          if (known != null && !MONTH_SEASONS[known].includes(season)) {
+            issues.push({ kind: 'Season', sev: 'medium', key: 'season:' + S.ch + ':' + hash(S.text),
+              msg: `The text says it's ${season}, but the story is in ${cap(MONTHS[known])} here.`,
+              note: 'This assumes the northern hemisphere. If your story is set in the south, ignore it.', quotes: [q()] });
+          }
+        }
+      }
+      // Months named on their own ("by April the ice had gone") help the season check.
+      const monRe = new RegExp('\\b(' + MO + ')\\b', 'gi');
+      while ((m = monRe.exec(S.text))) if (/^[A-Z]/.test(m[1]) && m[1] !== 'May' && !inDialogue(S, m.index)) st.monthHint = { m: MONTHS.indexOf(m[1].toLowerCase()), idx: S.idx };
+      // The story year here, if we can trust it: set in this chapter or the two before, with no long jump since.
+      if (!flash && st.year != null && st.anchorCh >= 0 && S.ch - st.anchorCh <= 2 && !st.approx) yearAt[S.idx] = st.year;
+      if (st.date != null) {
+        const c = cal[S.ch];
+        if (c.first == null) { c.first = st.date; c.exactFirst = st.exact; }
+        c.last = st.date;
+        c.year = fromDay(st.date).y;
+      } else if (st.year != null) cal[S.ch].year = st.year;
+    }
+    const chapterDates = cal.map((c) => ({
+      from: c.first != null ? fmtDay(c.first) : null, to: c.last != null && c.last !== c.first ? fmtDay(c.last) : null,
+      exact: c.exactFirst, year: c.year
+    }));
+    return { issues, yearAt, chapterDates };
+  }
+
+  function extractBirths(model, names, gender) {
+    const MO = MONTHS.join('|');
+    const re = new RegExp('\\bborn\\s+(?:in\\s+|on\\s+)?(?:the\\s+)?(?:(?:spring|summer|autumn|fall|winter)\\s+of\\s+)?(?:(?:\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?:' + MO + ')\\s+|(?:' + MO + ')\\s+(?:\\d{1,2}(?:st|nd|rd|th)?,?\\s+)?)?(1[5-9]\\d\\d|20\\d\\d)\\b', 'gi');
+    const out = [];
+    for (const S of model.sentences) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(S.text))) {
+        if (inDialogue(S, m.index)) continue;
+        const own = subjectOwner(model, S, tokenAt(S, m.index), names, gender);
+        if (!own) continue;
+        out.push({ owner: own.owner, year: +m[1], conf: own.conf, S, s: m.index, e: m.index + m[0].length });
+      }
+    }
+    return out;
+  }
 
   // ------------------------------------------------------------------ spelling
 
@@ -1239,6 +1854,8 @@
     progress('Finding characters', 0.15);
     const { names, stats, candidates } = findNames(model, spell, opts);
     const gender = inferGender(model, names);
+    const nameType = classifyNames(model, stats, gender);
+    const typeOf = (x) => nameType.get(x) || 'other';
     const issues = [];
     const push = (cat, it) => {
       const id = cat.slice(0, 2) + ':' + hash(it.key || (it.kind + it.msg));
@@ -1275,6 +1892,10 @@
         if (spell && known(c.name) && spell.correct(n.toLowerCase())) continue;
         const k = [a, b].sort().join('|');
         if (seenPairs.has(k)) continue;
+        // A person and a place with similar names are not a misspelling of each other.
+        const ta = typeOf(c.name), tb = typeOf(n);
+        if (ta !== 'other' && tb !== 'other' && ta !== tb) continue;
+        if (ta === 'place' && tb === 'place' && !(c.mid + c.start <= 2 && soundKey(a) === soundKey(b))) continue;
         seenPairs.add(k);
         const cn = c.mid + c.start, nn = stats.get(n).mid + stats.get(n).start;
         const [minor, major, mn, mj] = cn <= nn ? [c.name, n, cn, nn] : [n, c.name, nn, cn];
@@ -1305,7 +1926,19 @@
     const heights = extractHeights(model, names, gender);
     const hands = extractHandedness(model, names, gender);
     const profile = new Map();
-    const prof = (n) => { if (!profile.has(n)) profile.set(n, { eyes: [], hair: [], age: [], height: [], hand: [] }); return profile.get(n); };
+    const prof = (n) => {
+      if (!profile.has(n)) profile.set(n, { eyes: [], hair: [], age: [], born: [], height: [], stature: [], build: [], hand: [], marks: [], glasses: [], accent: [], family: [], things: [] });
+      return profile.get(n);
+    };
+    const possPron = (o) => (o === 'Narrator' ? 'my' : gender.get(o) === 'he' ? 'his' : gender.get(o) === 'she' ? 'her' : 'their');
+    const whoName = (o) => (o === 'Narrator' ? 'The narrator' : o);
+    const calendar = storyCalendar(model, chapters);
+    const births = extractBirths(model, names, gender);
+    const birthBy = new Map();
+    for (const b of births) {
+      if (!birthBy.has(b.owner)) birthBy.set(b.owner, b);
+      prof(b.owner).born.push({ value: String(b.year), ch: b.S.ch, conf: b.conf, quote: makeQuote(b.S, b.s, b.e) });
+    }
 
     for (const attr of ['eyes', 'hair']) {
       const compat = attr === 'eyes' ? EYE_COMPAT : HAIR_COMPAT;
@@ -1346,15 +1979,42 @@
     }
     for (const [owner, list] of ageBy) {
       list.sort((x, y) => x.S.idx - y.S.idx);
+      const who = whoName(owner);
+      // Against a stated birth year.
+      const born = birthBy.get(owner);
+      if (born) {
+        for (const a of list) {
+          const y = calendar.yearAt[a.S.idx];
+          if (y == null) continue;
+          const lo = y - born.year - 1, hi = y - born.year;
+          if (a.value < lo || a.value > hi) {
+            push('continuity', { kind: 'Age and year', sev: 'high', key: 'ageyr:' + owner + ':' + born.year + ':' + a.value + ':' + y,
+              msg: `${who} was born in ${born.year}, so in ${y} ${possPron(owner) === 'their' ? 'they' : possPron(owner) === 'his' ? 'he' : possPron(owner) === 'her' ? 'she' : 'I'} would be ${lo} or ${hi}, not ${a.value}.`,
+              note: 'The year comes from the most recent date in the story. If time has passed that the text doesn\'t mention, ignore this.',
+              quotes: [makeQuote(born.S, born.s, born.e), makeQuote(a.S, a.s, a.e)], owner });
+            break;
+          }
+        }
+      }
       for (let i = 1; i < list.length; i++) {
         const p = list[i - 1], c = list[i];
+        const yp = calendar.yearAt[p.S.idx], yc = calendar.yearAt[c.S.idx];
+        if (yp != null && yc != null) {
+          // Both ages have a known story year: the gap in age should match the gap in years.
+          if (Math.abs((c.value - p.value) - (yc - yp)) > 1) {
+            push('continuity', { kind: 'Age and year', sev: 'high', key: 'age2:' + owner + ':' + p.value + ':' + c.value,
+              msg: `${who} is ${p.value} in ${yp} (${chapters[p.S.ch].title}) but ${c.value} in ${yc} (${chapters[c.S.ch].title}).`,
+              quotes: [makeQuote(p.S, p.s, p.e), makeQuote(c.S, c.s, c.e)], owner });
+          }
+          continue;
+        }
         const sameCh = p.S.ch === c.S.ch;
         const birthdayStep = c.kind === 'birthday' || p.kind === 'birthday';
         if ((sameCh && c.value !== p.value && !(birthdayStep && Math.abs(c.value - p.value) === 1)) || c.value < p.value) {
           push('continuity', { kind: 'Age', sev: c.value < p.value ? 'high' : 'medium', key: 'age:' + owner + ':' + p.value + ':' + c.value,
             msg: c.value < p.value
-              ? `${owner === 'Narrator' ? 'The narrator' : owner} is ${p.value} in ${chapters[p.S.ch].title} but ${c.value} later, in ${chapters[c.S.ch].title}.`
-              : `${owner === 'Narrator' ? 'The narrator' : owner}'s age is given as both ${p.value} and ${c.value} in ${chapters[c.S.ch].title}.`,
+              ? `${who} is ${p.value} in ${chapters[p.S.ch].title} but ${c.value} later, in ${chapters[c.S.ch].title}.`
+              : `${who}'s age is given as both ${p.value} and ${c.value} in ${chapters[c.S.ch].title}.`,
             note: 'If this is a flashback or a time jump, you can ignore it.',
             quotes: [makeQuote(p.S, p.s, p.e), makeQuote(c.S, c.s, c.e)], owner });
         }
@@ -1378,6 +2038,70 @@
           quotes: firsts.slice(0, 3).map((x) => makeQuote(x.S, x.s, x.e)), owner });
       }
     }
+
+    // --- scars, accents, build, belongings, glasses
+    const feats = extractFeatures(model, names, gender);
+    const groups = new Map();
+    for (const f of feats) {
+      prof(f.owner)[f.field].push({ value: f.value, ch: f.S.ch, conf: f.conf, quote: makeQuote(f.S, f.s, f.e) });
+      const k = f.owner + '|' + f.field + '|' + (f.field === 'marks' ? f.kind + '|' + f.part : f.field === 'things' ? f.noun : '');
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(f);
+    }
+    const ref = (f) => chapters[f.S.ch].title;
+    for (const [k, list] of groups) {
+      const o = list[0].owner, who = whoName(o), field = list[0].field;
+      const sev = (xs) => (xs.some((x) => x.conf === 'low') ? 'medium' : 'high');
+      let clash = null;
+      if (field === 'marks') {
+        const sides = [...new Set(list.filter((x) => x.side).map((x) => x.side))];
+        if (sides.length > 1) {
+          const xs = sides.map((sd) => list.find((x) => x.side === sd));
+          clash = { kind: cap(list[0].kind), sev: sev(xs), xs,
+            msg: `${who}'s ${list[0].kind} is on ${possPron(o)} ` + xs.map((x) => `${x.side} ${x.part} (${ref(x)})`).join(' and on the ') + '.' };
+        }
+      } else if (field === 'accent') {
+        const vals = [...new Set(list.map((x) => x.value.toLowerCase()))];
+        if (vals.length > 1) {
+          const xs = vals.map((v) => list.find((x) => x.value.toLowerCase() === v));
+          clash = { kind: 'Accent', sev: 'medium', xs, msg: `${who}'s accent is described as ` + xs.map((x) => `${x.value} (${ref(x)})`).join(' and ') + '.' };
+        }
+      } else if (field === 'stature' || field === 'build') {
+        const fams = [...new Set(list.map((x) => x.fam))];
+        if (fams.length > 1) {
+          const xs = fams.map((fm) => list.find((x) => x.fam === fm));
+          clash = { kind: field === 'stature' ? 'Height' : 'Build', sev: field === 'stature' ? sev(xs) : 'medium', xs,
+            msg: `${who} is described as ` + xs.map((x) => `${x.value} (${ref(x)})`).join(' and ') + '.' };
+        }
+      } else if (field === 'things') {
+        const xs = [];
+        for (const x of list) if (!xs.some((y) => compatible(y.fams, x.fams, []))) xs.push(x);
+        if (xs.length > 1) clash = { kind: 'Belongings', sev: 'medium', xs,
+          msg: `${who}'s ${list[0].noun} is ` + xs.map((x) => `${x.colour} (${ref(x)})`).join(' and ') + '.',
+          note: 'Fine if they have more than one.' };
+      } else if (field === 'glasses') {
+        const yes = list.find((x) => x.wears), no = list.find((x) => !x.wears);
+        if (yes && no) clash = { kind: 'Glasses', sev: 'medium', xs: [yes, no], msg: `${who} wears glasses in ${ref(yes)}, but ${ref(no)} says otherwise.` };
+      }
+      if (clash) {
+        push('continuity', { kind: clash.kind, sev: clash.sev, key: 'feat:' + k + ':' + clash.xs.map((x) => x.value).sort().join(','),
+          msg: clash.msg, note: clash.note || null, quotes: clash.xs.slice(0, 3).map((x) => makeQuote(x.S, x.s, x.e)), owner: o });
+      }
+    }
+
+    // --- family
+    const rels = extractRelations(model, names, gender);
+    for (const r of rels) {
+      prof(r.b).family.push({ value: `${r.owner === 'Narrator' ? 'the narrator' : r.owner}'s ${r.rel}`, ch: r.S.ch, conf: r.conf, quote: makeQuote(r.S, r.s, r.e) });
+    }
+    relationIssues(rels, gender, chapters).forEach((it) => push('continuity', it));
+
+    // --- pronouns, point of view, tense
+    progress('Checking pronouns, point of view and tense', 0.42);
+    pronounSlips(model, names, gender).forEach((it) => push('continuity', it));
+    const pt = povTense(model, chapters, names);
+    pt.issues.forEach((it) => push('continuity', it));
+    calendar.issues.forEach((it) => push('continuity', it));
 
     // --- dead characters who come back
     progress('Checking who is still alive', 0.45);
@@ -1432,7 +2156,7 @@
         if (g > 0 && (!gap || g > gap.len)) gap = { from: chs[i - 1], to: chs[i], len: g };
       }
       const counts = new Array(chapters.length).fill(0);
-      return { name: n, mentions: st.mid + st.start, chapters: chs, counts, gap, gender: gender.get(n) || null, profile: profile.get(n) || null };
+      return { name: n, mentions: st.mid + st.start, chapters: chs, counts, gap, gender: gender.get(n) || null, type: typeOf(n), profile: profile.get(n) || null };
     });
     const charIdx = new Map(characters.map((c) => [c.name, c]));
     for (const S of model.sentences) for (const t of S.tokens) { const c = t.cap && charIdx.get(t.base); if (c) c.counts[S.ch]++; }
@@ -1455,6 +2179,7 @@
       if (n >= B.mentions * 0.8) {
         A.full = k;
         folded.add(b);
+        if (PLACE_NOUN.has(b.toLowerCase())) A.type = 'place';
         if (B.profile && !A.profile) A.profile = B.profile;
       }
     }
@@ -1470,12 +2195,13 @@
     progress('Done', 1);
     const totalWords = model.sentences.reduce((n, S) => n + S.tokens.length, 0);
     return {
-      version: 1,
+      version: 2,
       createdAt: new Date().toISOString(),
       dict: opts.dict || 'en-US',
       ms: Date.now() - t0,
       stats: { words: totalWords, chapters: chapters.length, sentences: model.sentences.length, paragraphs: model.paragraphs.length, quoteMode: model.quoteMode },
-      chapters: chapters.map((c, i) => ({ title: c.title, words: style.stats.chapterWords[i], source: [c.source[0], c.source[c.source.length - 1]] })),
+      chapters: chapters.map((c, i) => ({ title: c.title, words: style.stats.chapterWords[i], source: [c.source[0], c.source[c.source.length - 1]],
+        pov: pt.info[i].pov, tense: pt.info[i].tense, dates: calendar.chapterDates[i] })),
       issues,
       characters,
       timeline: tl.markers,

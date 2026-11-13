@@ -5,7 +5,7 @@ import { runLanguageTool } from './languagetool.js';
 // ------------------------------------------------------------------ state
 
 const CATS = [
-  { id: 'continuity', label: 'Continuity', blurb: 'Contradictions between chapters: names, looks, ages, dates and characters who should be gone.' },
+  { id: 'continuity', label: 'Continuity', blurb: 'Contradictions between chapters: names, looks, ages, family, belongings, dates and seasons, plus pronoun, point-of-view and tense slips.' },
   { id: 'spelling', label: 'Spelling', blurb: 'Words that aren’t in the dictionary, words spelled two ways, and inconsistent hyphens.' },
   { id: 'grammar', label: 'Grammar', blurb: 'Wrong words, repeated words, a/an, capitals and punctuation.' },
   { id: 'style', label: 'Style', blurb: 'Habits worth a second look: repeated phrases, echoes, long sentences and more.' }
@@ -27,7 +27,8 @@ const state = {
   lt: null,
   worker: null,
   openQuote: null,
-  charSort: 'mentions'
+  charSort: 'mentions',
+  charType: 'person'
 };
 let wordSet = new Set(state.words.map((w) => w.toLowerCase()));
 
@@ -313,7 +314,7 @@ function renderTabs() {
   const html = TABS.map((t) => {
     let n = '';
     if (counts[t.id]) n = `<span class="count">${fmt(counts[t.id].all)}</span>`;
-    if (t.id === 'characters') n = `<span class="count">${fmt(state.report.characters.filter((c) => !c.narrator && !state.hidden.includes(c.name)).length)}</span>`;
+    if (t.id === 'characters') n = `<span class="count">${fmt(state.report.characters.filter((c) => !c.narrator && c.type !== 'place' && c.type !== 'other' && !state.hidden.includes(c.name)).length)}</span>`;
     return `<button class="tab" role="tab" type="button" id="tab-${t.id}" aria-selected="${state.tab === t.id}" data-tab="${t.id}">${esc(t.label)}${n}</button>`;
   }).join('');
   $('#tabs').innerHTML = html;
@@ -474,7 +475,12 @@ function issueCard(it) {
 function charactersHtml() {
   const r = state.report;
   const n = r.chapters.length;
-  let list = r.characters.filter((c) => !state.hidden.includes(c.name));
+  const visible = r.characters.filter((c) => !state.hidden.includes(c.name));
+  // Older saved reports have no person/place types: treat everyone as a person.
+  const typeOf = (c) => (c.narrator ? 'person' : c.type === 'place' || c.type === 'other' ? 'place' : 'person');
+  const nPeople = visible.filter((c) => typeOf(c) === 'person').length;
+  const nPlaces = visible.length - nPeople;
+  let list = visible.filter((c) => typeOf(c) === state.charType);
   const sorters = {
     mentions: (a, b) => b.mentions - a.mentions,
     first: (a, b) => (a.chapters[0] ?? 1e9) - (b.chapters[0] ?? 1e9) || b.mentions - a.mentions,
@@ -494,7 +500,9 @@ function charactersHtml() {
       const clash = vals.length > 1 && clashOwners.has(c.name);
       facts.push(`<dt>${label}</dt><dd class="${clash ? 'clash' : ''}">${vals.map((v) => `${esc(v.value)} <span style="color:var(--ink-3);font-weight:400">(${esc(chShort(v.ch))})</span>`).join(', ')}</dd>`);
     };
-    fact('Eyes', p.eyes); fact('Hair', p.hair); fact('Age', p.age); fact('Height', p.height); fact('Hand', p.hand);
+    fact('Eyes', p.eyes); fact('Hair', p.hair); fact('Age', p.age); fact('Born', p.born);
+    fact('Height', [...(p.height || []), ...(p.stature || [])]); fact('Build', p.build); fact('Hand', p.hand);
+    fact('Marks', p.marks); fact('Glasses', p.glasses); fact('Accent', p.accent); fact('Family', p.family); fact('Owns', p.things);
     const max = Math.max(1, ...(c.counts || [0]));
     const strip = c.narrator ? '' : `
       <div class="strip-scroll"><div class="strip" style="min-width:${Math.min(n * 8, 2000)}px">${(c.counts || []).map((v, i) => `<span data-level="${v === 0 ? 0 : v / max > 0.66 ? 3 : v / max > 0.33 ? 2 : 1}" title="${esc(r.chapters[i].title)}: ${v}"></span>`).join('')}</div></div>
@@ -506,18 +514,22 @@ function charactersHtml() {
       <article class="person">
         <div class="person-top">
           <h3 class="person-name">${esc(c.full || c.name)}</h3>
-          <span class="person-meta">${c.narrator ? 'First-person narrator (“I”)' : `${plural(c.mentions, 'mention')} · ${plural(c.chapters.length, 'chapter')}${g ? ' · ' + g : ''}`}</span>
+          <span class="person-meta">${c.narrator ? 'First-person narrator (“I”)' : `${plural(c.mentions, 'mention')} · ${plural(c.chapters.length, 'chapter')}${g ? ' · ' + g : ''}${c.type === 'other' ? ' · person or place?' : ''}`}</span>
         </div>
         ${strip}
         ${gap}
         ${facts.length ? `<dl class="facts">${facts.join('')}</dl>` : ''}
-        ${c.narrator ? '' : `<div><button class="btn small ghost" type="button" data-action="hide-name" data-name="${esc(c.name)}">Not a character</button></div>`}
+        ${c.narrator || typeOf(c) !== 'person' ? '' : `<div><button class="btn small ghost" type="button" data-action="hide-name" data-name="${esc(c.name)}">Not a character</button></div>`}
       </article>`;
   };
 
   return `
     <div class="stack" style="padding-top:16px">
-      <p class="section-lead">Found by looking for capitalised words, so places and other names show up too. Tap “Not a character” to hide them. The strip shows how often each one appears in each chapter.</p>
+      <p class="section-lead">Names are sorted into people and places by how the book uses them (“Tom said”, “in Halden”). Tap “Not a character” to hide anything in the wrong list. The strip shows how often each one appears in each chapter.</p>
+      <div class="chips" role="group" aria-label="Show">
+        <button class="chip" type="button" data-action="char-type" data-type="person" aria-pressed="${state.charType === 'person'}">People <span>${fmt(nPeople)}</span></button>
+        <button class="chip" type="button" data-action="char-type" data-type="place" aria-pressed="${state.charType === 'place'}">Places and other names <span>${fmt(nPlaces)}</span></button>
+      </div>
       <div class="filters">
         <label for="char-sort" class="hint">Sort by</label>
         <select id="char-sort" data-action="char-sort">
@@ -526,35 +538,57 @@ function charactersHtml() {
           <option value="name" ${state.charSort === 'name' ? 'selected' : ''}>Name</option>
         </select>
       </div>
-      ${list.length ? `<div class="people">${list.slice(0, shown).map(card).join('')}</div>` : '<div class="empty">No characters were found.</div>'}
+      ${list.length ? `<div class="people">${list.slice(0, shown).map(card).join('')}</div>` : `<div class="empty">${state.charType === 'person' ? 'No characters were found.' : 'No places or other names were found.'}</div>`}
       ${list.length > shown ? `<div class="more-row"><button class="btn" type="button" data-action="more-chars">Show more</button></div>` : ''}
     </div>`;
 }
 
 // --- timeline
 
+function calendarLine(c) {
+  const d = c.dates;
+  if (!d || (!d.from && !d.year)) return '';
+  let text;
+  if (!d.from) text = String(d.year);
+  else text = (d.exact ? '' : 'On or after ') + d.from + (d.to ? ' to ' + d.to : '');
+  return `<span class="tl-date">${esc(text)}</span>`;
+}
+
 function timelineHtml() {
   const r = state.report;
-  const tlIssues = visibleIssues('continuity').filter((i) => i.kind === 'Timeline');
+  const tlIssues = visibleIssues('continuity').filter((i) => ['Timeline', 'Season', 'Time goes backwards', 'Age and year'].includes(i.kind));
   const rows = r.chapters.map((c, i) => {
     const items = (r.timeline[i] || []);
     const open = state.openQuote && state.openQuote[0] === i ? items[state.openQuote[1]] : null;
     return `
       <div class="tl-row">
-        <div class="tl-ch">${esc(c.title)}</div>
+        <div class="tl-ch">${esc(c.title)}${calendarLine(c)}</div>
         <div class="tl-items">${items.length ? items.map((m, k) => `<button class="tl-item ${m.kind}" type="button" data-action="tl" data-ch="${i}" data-k="${k}" aria-expanded="${!!(open && open === m)}">${esc(m.label)}</button>`).join('') : '<span class="tl-none">No dates or time jumps found</span>'}</div>
         ${open ? `<div class="tl-quote">${quoteHtml(open.quote)}</div>` : ''}
       </div>`;
   }).join('');
   return `
     <div class="stack" style="padding-top:16px">
-      <p class="section-lead">Every date, day of the week, season and time jump found in each chapter, so you can follow the story’s calendar. Tap one to see the sentence.</p>
+      <p class="section-lead">Every date, day of the week, season and time jump in each chapter. Under each chapter is the story’s date, worked out from the dates and time jumps so far. “On or after” means time may have passed that the text doesn’t mention. Tap a marker to see the sentence.</p>
       ${tlIssues.length ? `<div class="issues">${tlIssues.map(issueCard).join('')}</div>` : ''}
       <div class="tl">${rows}</div>
     </div>`;
 }
 
 // --- style
+
+function povPanel() {
+  const chs = state.report.chapters;
+  if (!chs.some((c) => c.pov || c.tense)) return '';
+  const POV = { first: 'First person', third: 'Third person', mixed: 'Mixed' };
+  const TENSE = { past: 'past tense', present: 'present tense', mixed: 'mixed tense' };
+  const rows = chs.map((c) => [c.title, [POV[c.pov], TENSE[c.tense]].filter(Boolean).join(', ') || 'Too short to tell']);
+  return `<section class="panel">
+    <h3>Point of view and tense</h3>
+    <table class="wordlist"><tbody>${rows.map(([t, v]) => `<tr><td style="font-family:var(--f-body)">${esc(t)}</td><td class="n" style="width:auto;white-space:nowrap">${esc(v)}</td></tr>`).join('')}</tbody></table>
+    <p>How each chapter is told. Sentences that slip out of it are listed under Continuity.</p>
+  </section>`;
+}
 
 function styleHtml() {
   const s = state.report.style;
@@ -590,6 +624,7 @@ function styleHtml() {
           </div>
           <p>Flesch reading ease, from 0 (very hard) to 100 (very easy). Most popular fiction scores 70 to 90.</p>
         </section>
+        ${povPanel()}
         <section class="panel">
           <h3>Chapter lengths</h3>
           <div class="lenbars">${lens}</div>
@@ -716,6 +751,10 @@ function onReportClick(e) {
     const cat = t.dataset.cat;
     state.shown[cat] = (state.shown[cat] || PAGE) + PAGE;
     $('#list-' + cat).innerHTML = issueListHtml(cat);
+  } else if (a === 'char-type') {
+    state.charType = t.dataset.type;
+    state.shown.characters = 30;
+    renderPanel();
   } else if (a === 'more-chars') {
     state.shown.characters = (state.shown.characters || 30) + 30;
     renderPanel();

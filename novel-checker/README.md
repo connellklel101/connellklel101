@@ -2,12 +2,20 @@
 
 A website you upload a novel to. It checks the book and gives you a report covering:
 
-- **Continuity**: a character's eyes or hair described in two different colours; ages that go backwards; names spelled two ways ("Katherine" and "Catherine"); a character who dies and later speaks; dates that fell on a different weekday ("Thursday, March 14, 1997" was a Friday); impossible dates (February 30); days of the week that don't add up ("On Monday… The next day, Wednesday").
+- **Continuity**:
+  - Looks: eye and hair colour, height and build, scars and tattoos on the wrong side, glasses, accents.
+  - Ages that go backwards or don't match a stated birth year ("born in 1920", so 81 in 1997 is wrong).
+  - Names spelled two ways ("Katherine" and "Catherine").
+  - Family that changes ("Katherine's husband, Walter" then "Katherine's husband, Albert"), and belongings that change colour (a green car that turns blue).
+  - A character who dies and later speaks.
+  - **Pronoun slips** ("Tom shook her head" when Tom is "he" everywhere else).
+  - **Point-of-view slips** (a stray "I" in a third-person book) and **tense slips** ("He looks up" in a past-tense chapter).
+  - **Calendar**: dates that fell on a different weekday, impossible dates (February 30), days that don't add up ("On Monday… The next day, Wednesday"), seasons and holidays that don't fit the month (summer in March, Christmas in July), and time that goes backwards outside a flashback.
 - **Spelling**: words not in the dictionary, with suggestions; words spelled two ways ("grey" and "gray"); inconsistent hyphens ("ice-cream" and "ice cream"). US or UK English.
 - **Grammar**: "could of", "rather then", "a apple", "the the", "its not", lower-case "i", missing spaces, unclosed quotation marks and more.
 - **Style**: repeated phrases, echoes (the same word twice close together), sentences that all start the same way, long sentences, adverbs, filter words, passive voice, overused gestures (nodding, shrugging, sighing), readability score, dialogue share and chapter lengths.
-- **Characters**: every name found, how often they appear in each chapter, and what the book says about their eyes, hair, age, height and handedness.
-- **Timeline**: every date, weekday, season and time jump, chapter by chapter.
+- **Characters**: every name found, sorted into people and places, how often they appear in each chapter, and what the book says about them (looks, age, birth year, marks, glasses, accent, family and belongings).
+- **Timeline**: every date, weekday, season and time jump, chapter by chapter, plus the story's running calendar ("Chapter 3: on or after Mon 17 Mar 1997").
 
 It uses **no AI and has no running costs**. The checks are rules and word lists, and they run in your browser. **Your book never leaves your device**, unless you switch on the optional online grammar check, which sends the text to [LanguageTool](https://languagetool.org)'s free service.
 

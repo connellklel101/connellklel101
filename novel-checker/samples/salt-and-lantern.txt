@@ -5,11 +5,11 @@ A sample story with deliberate mistakes, for trying out Novel Checker.
 
 Chapter 1: The Keeper's Daughter
 
-The storm came in off the water on Thursday, March 14, 1997, and it did not leave for three days. Mara Venn watched it from the gallery of the lighthouse, her hands wrapped around a mug of tea that had gone cold an hour ago.
+The storm came in off the water on Thursday, March 14, 1997, and it did not leave for three days. The summer had come early to Gull Point that year, and the storm had come with it. Mara Venn watched it from the gallery of the lighthouse, her hands wrapped around a mug of tea that had gone cold an hour ago.
 
 Mara's gray eyes followed the line of the breakers as they rolled toward the rocks. She had lived on Gull Point her whole life, and she knew the moods of the sea better than she knew her own.
 
-Below her, the lamp turned. Her father had trimmed the wick at dusk, as he did every night. Elias was forty-two years old and had kept the light for half of that time. He moved through the tower slowly, like a man who expected the stairs to argue with him.
+Below her, the lamp turned. Her father had trimmed the wick at dusk, as he did every night. Elias was forty-two years old and had kept the light for half of that time. He moved through the tower slowly, like a man who expected the stairs to argue with him. Elias had a pale scar across his left cheek, from the winter the old lens had shattered.
 
 "You'll catch your death up there," he called.
 
@@ -36,7 +36,7 @@ Tom Harker was already on the quay, coiling rope with the quick, careless hands 
 
 She laughed despite herself. Tom took a deep breath, as if he was about to say something important, and then seemed to think better of it. He handed her a crate of oranges instead.
 
-Katherine Dunmore ran the shop at the top of the hill. She had run it for as long as anyone could remember, and she knew everything that happened in the village, usually before it had happened. When Mara came in with the crate, Katherine was already waiting behind the counter.
+Katherine Dunmore ran the shop at the top of the hill. Katherine's husband, Walter, had built the counter himself, the year they married. She had run it for as long as anyone could remember, and she knew everything that happened in the village, usually before it had happened. When Mara came in with the crate, Katherine was already waiting behind the counter.
 
 "Tom Harker," Katherine said, "would rather carry crates for you then say what he means."
 
@@ -44,16 +44,16 @@ Katherine Dunmore ran the shop at the top of the hill. She had run it for as lon
 
 "I'm only saying what the whole village is saying." Katherine took a apple from the bowl on the counter and polished it on her sleeve. "Brennan says the the same, and Brennan never says anything."
 
-Old Brennan sat by the window, as he did every day, with a pipe he never lit. He nodded at Mara and went back to watching the water.
+Old Brennan, who had been born in 1920, sat by the window, as he did every day, with a pipe he never lit. He nodded at Mara and went back to watching the water.
 
 Suddenly the bell above the door rang, and the cold came in after it.
 
 
 Chapter 3: Brennan
 
-On Monday, the doctor's car drove up the hill road and did not come back down until after dark.
+On Monday, Dr Ashby's green car drove up the hill road and did not come back down until after dark.
 
-Brennan died in the night. The sky over the church was grey and low by morning. Dr Ashby said it was his heart, and that he had not suffered, and that at eighty-one it was a mercy to go quietly. Katherine closed the shop for the first time in eleven years.
+Brennan died in the night. The sky over the church was grey and low by morning. Dr Ashby said it was his heart, and that he had not suffered. Brennan had been eighty-one years old, and at that age it was a mercy to go quietly. Katherine closed the shop for the first time in eleven years.
 
 The next day, Wednesday, the whole village walked to the church on the cliff. Mara stood at the back with her father. Tom stood on the other side of the aisle and did not look at her once.
 
@@ -86,6 +86,8 @@ Tom took a deep breath. "When do you go?"
 
 "After the new light is in. Father can't do it alone."
 
+Tom shook her head slowly, as if he could shake the idea loose.
+
 They carried the crates up the hill in silence. At the top, Tom set his down and looked out at the water for a long time.
 
 
@@ -93,11 +95,11 @@ Chapter 5: The Window
 
 The new light went into service on February 30, and the whole village came out to see it lit.
 
-Elias stood at the foot of the tower and watched the beam sweep across the bay. Elias was thirty-nine years old that winter and felt every one of those years in his knees, but tonight he looked younger than Mara had seen him in a long time.
+Elias stood at the foot of the tower and watched the beam sweep across the bay, the light catching the old scar on his right cheek. Elias was thirty-nine years old that winter and felt every one of those years in his knees, but tonight he looked younger than Mara had seen him in a long time.
 
-Katherine had brought soup in a great black pot, and Dr Ashby had brought something stronger in a flask. Brennan said it was the finest light on the whole coast, and everyone agreed with him.
+Katherine's husband, Albert, had carried up soup in a great black pot. Dr Ashby had parked his blue car by the gate and brought something stronger in a flask. Brennan said it was the finest light on the whole coast, and everyone agreed with him.
 
-Mara climbed to the gallery one last time. Below her, the lamp turned. The beam went out across the water, and came back, and went out again.
+Mara climbed to the gallery one last time. Below her, the lamp turned. I watched the beam go out across the water, and come back, and go out again.
 
 She thought about Halden, and the course, and the long road away from Gull Point. Then she thought about Tom on the quay, coiling rope, grinning up at her.
 
@@ -106,7 +108,7 @@ She went down the stairs two at a time.
 
 Chapter 6: The Crossing
 
-Tom was at the harbor, as she had known he would be.
+Tom was at the harbor, as she had known he would be. He looks up from the rope and smiles when he sees her.
 
 "I'm still going," she said, before he could speak. "But I'm coming back. Its not forever."
 

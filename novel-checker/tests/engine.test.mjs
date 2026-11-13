@@ -77,6 +77,36 @@ test('UK dictionary accepts UK spelling', () => {
   const uk = A.analyze(A.textToParagraphs('Chapter 1\n\nThe colour of the grey harbour was her favourite thing to realise.'), speller('en-GB'), {});
   assert.ok(!uk.issues.some((i) => i.kind === 'Spelling'));
 });
+test('scar on the other side', () => assert.ok(has(r, 'Scar', /Elias's scar is on his left cheek.*right cheek/)));
+test('two different husbands', () => assert.ok(has(r, 'Family', /Katherine's husband is called Walter.*Albert/)));
+test('car changes colour', () => assert.ok(has(r, 'Belongings', /Ashby's car is green.*blue/)));
+test('age against birth year', () => assert.ok(has(r, 'Age and year', /Brennan was born in 1920, so in 1997 he would be 76 or 77, not 81/)));
+test('summer in March', () => assert.ok(has(r, 'Season', /summer.*March/)));
+test('pronoun slip', () => assert.ok(has(r, 'Pronoun', /Tom is "he" everywhere else, but here it says "her"/)));
+test('point-of-view slip', () => assert.ok(has(r, 'Point of view', /"I" appears outside dialogue/)));
+test('tense slip', () => assert.ok(has(r, 'Tense', /present tense \("looks"\)/)));
+test('people and places', () => {
+  const by = Object.fromEntries(r.characters.map((c) => [c.name, c]));
+  assert.equal(by.Mara.type, 'person');
+  assert.equal(by.Ashby.type, 'person');
+  assert.equal(by.Gull.type, 'place');
+  assert.equal(by.Gull.full, 'Gull Point');
+});
+test('story calendar', () => {
+  assert.equal(r.chapters[0].dates.from, 'Fri 14 Mar 1997');
+  assert.equal(r.chapters[2].dates.from, 'Mon 17 Mar 1997');
+  assert.equal(r.chapters[2].pov, 'third');
+  assert.equal(r.chapters[2].tense, 'past');
+});
+test('new checks stay quiet on correct text', () => {
+  const t = run(`Chapter 1\n\nIt was Tuesday, June 3, 2003, and the summer had barely begun. Nell shook her head. Nell told herself to wait. ` +
+    `She was born in 1980. Nell was twenty-three years old. Nell's brother, Sam, laughed. Sam shook his head and grinned. ` +
+    `Sam asked her to help herself. Nell pushed her glasses up her nose. Nell's red car was parked outside. Sam said nothing.\n\n` +
+    `Chapter 2\n\nThe next day Nell drove to the coast. Sam was tall and thin. Her brother Sam waved. Nell's red car was dusty. ` +
+    `He walked to the door and opened it. "I know," Nell said. "I always know." It was Christmas Eve when she came home, six months later.`);
+  const bad = t.issues.filter((i) => i.cat === 'continuity');
+  assert.deepEqual(bad.map((i) => i.msg), []);
+});
 test('number parsing', () => {
   assert.equal(A.parseNum('forty-two'), 42);
   assert.equal(A.parseOrd('twenty-first'), 21);
