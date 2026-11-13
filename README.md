@@ -13,3 +13,9 @@ This repo holds the plan for a Roblox game, and later its code.
 Once the design is solid enough, development will start here, likely with
 [Rojo](https://rojo.space/) so the Luau code lives in this repo and syncs
 into Roblox Studio.
+
+## Other projects in this repo
+
+| Folder | What it is |
+|--------|------------|
+| [`novel-checker/`](novel-checker/) | A free website that checks a novel for spelling, grammar, continuity errors and style habits, with no AI. See its [README](novel-checker/README.md). |
