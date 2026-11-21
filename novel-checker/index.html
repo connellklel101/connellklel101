@@ -118,6 +118,20 @@
         <div><button class="btn small" id="btn-save-words" type="button">Save my words</button></div>
       </div>
       <div class="dlg-section">
+        <h3>How to check</h3>
+        <label class="check" for="set-strict-dialogue">
+          <input type="checkbox" id="set-strict-dialogue">
+          <span>Check dialogue as strictly as the rest of the text
+            <span class="hint" style="display:block">Normally slang and dialect inside quotation marks (“gonna”, “goin’”) aren’t flagged, and grammar notes there are only suggestions.</span></span>
+        </label>
+        <label class="check" for="set-southern">
+          <input type="checkbox" id="set-southern">
+          <span>My story is set in the southern hemisphere
+            <span class="hint" style="display:block">So summer falls in December and winter in June when seasons are checked.</span></span>
+        </label>
+        <p class="hint">These apply the next time you check a book.</p>
+      </div>
+      <div class="dlg-section">
         <h3>Hidden from the character list</h3>
         <p class="hint">Words you marked as “not a character”. Remove one to show it again.</p>
         <div class="taglist" id="set-hidden"></div>
@@ -148,6 +162,40 @@
     <div class="dlg-body">
       <div class="hist" id="hist-list"></div>
     </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-export" aria-labelledby="export-title">
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2 id="export-title">Download for Word</h2>
+      <button class="btn ghost small" type="button" data-close>Close</button>
+    </div>
+    <div class="dlg-body">
+      <p class="hint" id="export-lead">You’ll get a copy of your manuscript with each note in the margin as a Word comment, so you can work through them in Word, Google Docs or Pages. Notes you’ve ignored are left out.</p>
+      <div class="dlg-section" id="export-cats">
+        <h3>Include</h3>
+        <label class="check"><input type="checkbox" value="continuity" checked> <span>Continuity</span></label>
+        <label class="check"><input type="checkbox" value="spelling" checked> <span>Spelling</span></label>
+        <label class="check"><input type="checkbox" value="grammar" checked> <span>Grammar</span></label>
+        <label class="check"><input type="checkbox" value="style"> <span>Style <span class="hint">(can add a lot of comments)</span></span></label>
+      </div>
+      <div><button class="btn primary" type="button" id="btn-export-go">Make the Word file</button></div>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlg-reader" class="reader" aria-label="Reading view">
+  <div class="reader-shell">
+    <div class="reader-bar">
+      <button class="btn small ghost" type="button" id="reader-prev" aria-label="Previous chapter">‹</button>
+      <label class="visually-hidden" for="reader-ch">Chapter</label>
+      <select id="reader-ch"></select>
+      <button class="btn small ghost" type="button" id="reader-next" aria-label="Next chapter">›</button>
+      <button class="btn small" type="button" data-close>Close</button>
+    </div>
+    <div class="chips reader-cats" id="reader-cats"></div>
+    <div class="reader-body" id="reader-body"></div>
   </div>
 </dialog>
 

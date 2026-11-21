@@ -17,6 +17,15 @@ A website you upload a novel to. It checks the book and gives you a report cover
 - **Characters**: every name found, sorted into people and places, how often they appear in each chapter, and what the book says about them (looks, age, birth year, marks, glasses, accent, family and belongings).
 - **Timeline**: every date, weekday, season and time jump, chapter by chapter, plus the story's running calendar ("Chapter 3: on or after Mon 17 Mar 1997").
 
+Then you can work through the notes:
+
+- **Read with notes**: read each chapter with every note underlined in place. Tap one to see what it says.
+- **Download for Word**: get your manuscript back with every note as a Word comment in the margin. If you uploaded a .docx, the comments are added to your own file, so its formatting stays exactly as it was. It also opens in Google Docs and Pages.
+- **Story bible**: on the Characters tab, write down the facts you've decided for a character (pronouns, eyes, hair, year born, height, build, handedness, glasses, accent, scars). The book is then checked against them.
+- **Check again**: re-check after editing your settings or story bible, or upload a new draft. The report shows which notes have gone since last time and marks the new ones.
+- **Dialogue is checked gently**: slang and dialect inside quotation marks ("gonna", "goin'") aren't flagged, and grammar notes there become suggestions. Real typos ("teh", "definately") are still caught. You can turn this off in Settings.
+- **Southern hemisphere**: a setting that flips the season check, so summer falls in December.
+
 It uses **no AI and has no running costs**. The checks are rules and word lists, and they run in your browser. **Your book never leaves your device**, unless you switch on the optional online grammar check, which sends the text to [LanguageTool](https://languagetool.org)'s free service.
 
 It reads **Word (.docx), PDF, EPUB and plain text (.txt, .md)** files, or text you paste in. Old `.doc` files and Pages documents need to be saved as `.docx` first.
@@ -67,7 +76,9 @@ Tested on a 212,000-word novel: the report took about 6 seconds in a desktop bro
 | `js/app.js` | Page logic: uploading, the report, settings, history |
 | `js/importers.js` | Reads .docx, .pdf, .epub and .txt files into paragraphs |
 | `js/languagetool.js` | The optional online grammar check |
-| `js/storage.js` | Saves settings and past reports in the browser |
+| `js/storage.js` | Saves settings, past reports and the book's text in the browser |
+| `js/annotate.js` | Works out where each note sits in the text |
+| `js/docx-export.js` | Builds the Word file with notes as comments |
 | `engine/analyzer.js` | All the checks. Plain JavaScript, no dependencies |
 | `engine/worker.js` | Runs the checks in the background so the page stays responsive |
 | `dict/` | US and UK English Hunspell dictionaries |

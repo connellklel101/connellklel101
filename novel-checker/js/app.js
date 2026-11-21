@@ -1,6 +1,8 @@
 import { importFile } from './importers.js';
 import { prefs, history } from './storage.js';
 import { runLanguageTool } from './languagetool.js';
+import { chapterParagraphs, noteLocations } from './annotate.js';
+import { buildDocx } from './docx-export.js';
 
 // ------------------------------------------------------------------ state
 
@@ -28,6 +30,11 @@ const state = {
   worker: null,
   openQuote: null,
   charSort: 'mentions',
+  text: null,
+  reader: null,
+  readerCache: null,
+  bibleOpen: null,
+  compareAll: false,
   charType: 'person'
 };
 let wordSet = new Set(state.words.map((w) => w.toLowerCase()));
@@ -119,7 +126,7 @@ function analyzeInWorker(paragraphs, options) {
   });
 }
 
-async function runCheck({ title, paragraphs, sample = false }) {
+async function runCheck({ title, paragraphs, sample = false, source = null, sourceName = null }) {
   stopLanguageTool();
   message('', '');
   const words = paragraphs.reduce((n, p) => n + (p.t.match(/\S+/g) || []).length, 0);
@@ -134,7 +141,10 @@ async function runCheck({ title, paragraphs, sample = false }) {
   const options = {
     dict: $('#opt-dict').value,
     customWords: state.words,
-    hiddenNames: state.hidden
+    hiddenNames: state.hidden,
+    bible: getBible(title),
+    strictDialogue: !!prefs.get('strictDialogue', false),
+    southern: !!prefs.get('southern', false)
   };
   let report;
   try {
@@ -167,16 +177,22 @@ async function runCheck({ title, paragraphs, sample = false }) {
     if (prev) {
       const prevIds = new Set(prev.issues.map((i) => i.id));
       const curIds = new Set(report.issues.map((i) => i.id));
+      const gone = prev.issues.filter((i) => !curIds.has(i.id) && !state.ignored.has(i.id));
+      report.issues.forEach((i) => { if (!prevIds.has(i.id)) i.isNew = true; });
       report.compare = {
         date: prev.createdAt,
+        prevId: prev.id,
         prevTotal: prev.issues.filter((i) => !state.ignored.has(i.id)).length,
-        fixed: [...prevIds].filter((id) => !curIds.has(id) && !state.ignored.has(id)).length,
-        added: [...curIds].filter((id) => !prevIds.has(id)).length
+        fixed: gone.length,
+        added: [...curIds].filter((id) => !prevIds.has(id)).length,
+        fixedList: gone.slice(0, 400).map((i) => ({ id: i.id, cat: i.cat, kind: i.kind, sev: i.sev, msg: i.msg }))
       };
     }
     await history.save(report);
+    await history.saveText({ id: report.id, paragraphs, source: source || null, sourceName: sourceName || null });
     prefs.set('last', report.id);
   }
+  state.text = { id: report.id, paragraphs, source: source || null, sourceName: sourceName || null };
   $('#progress').hidden = true;
   showReport(report, { sample });
   if (!sample && $('#opt-lt').checked) startLanguageTool();
@@ -191,8 +207,8 @@ async function handleFile(file) {
   $('#report').hidden = true;
   setProgress('Opening the file', 0.01);
   try {
-    const { title, paragraphs } = await importFile(file, (label) => setProgress(label, 0.02));
-    await runCheck({ title, paragraphs });
+    const { title, paragraphs, source, sourceName } = await importFile(file, (label) => setProgress(label, 0.02));
+    await runCheck({ title, paragraphs, source, sourceName });
   } catch (err) {
     $('#progress').hidden = true;
     $('#report').hidden = !state.report;
@@ -265,7 +281,11 @@ function showReport(report, { sample = false } = {}) {
   state.openQuote = null;
   if (!TABS.some((t) => t.id === state.tab)) state.tab = 'overview';
   if (sample) state.tab = 'overview';
+  state.compareAll = false;
+  state.bibleOpen = null;
   renderReport();
+  // Reports opened from history: fetch the saved text so re-checking, reading and Word export work.
+  if (!textReady()) ensureText().then((t) => { if (t && state.report === report) renderHeadActions(); });
 }
 
 function refreshAfterChange(keepPanel) {
@@ -293,17 +313,28 @@ function renderReport() {
         <p class="meta">${fmt(r.stats.words)} words · ${plural(r.stats.chapters, 'chapter')} · ${r.dict === 'en-GB' ? 'UK' : 'US'} English</p>
         ${compare}
       </div>
-      <div class="chips">
-        <button class="btn small" type="button" data-action="copy">Copy as text</button>
-        <button class="btn small" type="button" data-action="new">Check another file</button>
-      </div>
+      <div class="chips head-actions" id="head-actions"></div>
     </div>
     <div id="lt-status" hidden></div>
     <div class="tabs-scroll"><div class="tabs" role="tablist" id="tabs"></div></div>
     <div id="panel" role="tabpanel"></div>`;
+  renderHeadActions();
   renderTabs();
   renderLtStatus();
   renderPanel();
+}
+
+function renderHeadActions() {
+  const el = $('#head-actions');
+  if (!el) return;
+  const ready = textReady();
+  const off = ready ? '' : 'disabled title="Upload the book again to use this"';
+  el.innerHTML = `
+    <button class="btn small primary" type="button" data-action="read" ${off}>Read with notes</button>
+    <button class="btn small" type="button" data-action="export" ${off}>Download for Word</button>
+    <button class="btn small" type="button" data-action="recheck" ${state.text && state.text.id === state.report.id ? '' : 'disabled title="Upload the book again to use this"'}>Check again</button>
+    <button class="btn small" type="button" data-action="copy">Copy as text</button>
+    <button class="btn small ghost" type="button" data-action="new">Check another file</button>`;
 }
 
 function renderTabs() {
@@ -366,6 +397,7 @@ function overviewHtml() {
   return `
     <div class="stack" style="gap:20px;padding-top:16px">
       <div class="tiles">${tiles}</div>
+      ${compareHtml()}
       <div class="two-col">
         <div class="stack">
           <div>
@@ -400,6 +432,7 @@ function filteredIssues(cat) {
   const q = f.q.trim().toLowerCase();
   return visibleIssues(cat).filter((it) => {
     if (f.sev !== 'all' && it.sev !== f.sev) return false;
+    if (f.newOnly && !it.isNew) return false;
     if (f.kind !== 'all' && it.kind !== f.kind) return false;
     if (f.ch !== 'all' && !issueChapters(it).includes(+f.ch)) return false;
     if (q && !(it.msg.toLowerCase().includes(q) || (it.quotes || []).some((x) => x.text.toLowerCase().includes(q)))) return false;
@@ -428,6 +461,7 @@ function issueTabHtml(cat, { lead = true } = {}) {
       <div class="chips" data-cat="${cat}">
         ${[['all', 'All', all.length], ['high', 'Likely errors', sevCount('high')], ['medium', 'Check this', sevCount('medium')], ['low', 'Suggestions', sevCount('low')]]
           .map(([v, l, n]) => `<button class="chip" type="button" data-sev="${v}" aria-pressed="${f.sev === v}">${l} <span>${fmt(n)}</span></button>`).join('')}
+        ${state.report.compare ? `<button class="chip" type="button" data-action="new-only" aria-pressed="${!!f.newOnly}">New since last check <span>${fmt(all.filter((i) => i.isNew).length)}</span></button>` : ''}
       </div>
       <div id="list-${cat}">${issueListHtml(cat)}</div>
     </div>`;
@@ -446,7 +480,7 @@ function issueListHtml(cat) {
     ${list.length > shown ? `<div class="more-row"><button class="btn" type="button" data-action="more" data-cat="${cat}">Show ${fmt(Math.min(PAGE, list.length - shown))} more</button></div>` : ''}`;
 }
 
-function issueCard(it) {
+function issueCard(it, { compact = false } = {}) {
   const catLabel = CATS.find((c) => c.id === it.cat)?.label || '';
   const chs = issueChapters(it);
   let where = '';
@@ -454,11 +488,13 @@ function issueCard(it) {
   const sugg = (it.sugg && it.sugg.length) ? it.sugg : (it.fix ? [it.fix] : []);
   const actions = [];
   if (it.word && (it.kind === 'Spelling' || it.kind === 'Unknown name')) actions.push(`<button class="btn small" type="button" data-action="addword" data-word="${esc(it.word)}">Add “${esc(it.word)}” to my words</button>`);
+  if (!compact && textReady() && it.quotes && it.quotes.length) actions.unshift(`<button class="btn small" type="button" data-action="show-in-book" data-id="${esc(it.id)}">Show in the book</button>`);
   actions.push(`<button class="btn small ghost" type="button" data-action="ignore" data-id="${esc(it.id)}">Ignore</button>`);
   return `
     <article class="issue sev-${it.sev}">
       <div class="issue-top">
         <span class="sev ${it.sev}">${SEV_LABEL[it.sev]}</span>
+        ${it.isNew && state.report && state.report.compare ? '<span class="new-chip">New</span>' : ''}
         <span class="kind"><span class="dot ${it.cat}" title="${esc(catLabel)}"></span>${esc(it.kind)}</span>
         ${where ? `<span class="kind">${esc(where)}</span>` : ''}
       </div>
@@ -490,6 +526,7 @@ function charactersHtml() {
   const shown = state.shown.characters || 30;
   const clashOwners = new Set(visibleIssues('continuity').map((i) => i.owner).filter(Boolean));
 
+  const bible = getBible(r.title);
   const card = (c) => {
     const p = c.profile || {};
     const facts = [];
@@ -519,7 +556,9 @@ function charactersHtml() {
         ${strip}
         ${gap}
         ${facts.length ? `<dl class="facts">${facts.join('')}</dl>` : ''}
-        ${c.narrator || typeOf(c) !== 'person' ? '' : `<div><button class="btn small ghost" type="button" data-action="hide-name" data-name="${esc(c.name)}">Not a character</button></div>`}
+        ${bible[c.name] && bibleSummary(bible[c.name]) ? `<p class="bible-sum"><b>Story bible:</b> ${esc(bibleSummary(bible[c.name]))}</p>` : ''}
+        ${state.bibleOpen === c.name ? bibleForm(c, bible[c.name]) : ''}
+        ${c.narrator || typeOf(c) !== 'person' ? '' : `<div class="chips">${state.bibleOpen === c.name ? '' : `<button class="btn small" type="button" data-action="bible-open" data-name="${esc(c.name)}">${bible[c.name] ? 'Edit story bible' : 'Add to story bible'}</button>`}<button class="btn small ghost" type="button" data-action="hide-name" data-name="${esc(c.name)}">Not a character</button></div>`}
       </article>`;
   };
 
@@ -674,6 +713,235 @@ function styleHtml() {
     </div>`;
 }
 
+// ------------------------------------------------------------------ book text, story bible, saving files
+
+const titleKey = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function getBible(title) { return prefs.get('bible:' + titleKey(title), {}) || {}; }
+function setBible(title, b) { prefs.set('bible:' + titleKey(title), b); }
+
+function textReady() {
+  return !!(state.text && state.report && state.text.id === state.report.id && state.report.chapters.every((c) => Array.isArray(c.paras)));
+}
+
+async function ensureText() {
+  const r = state.report;
+  if (!r) return null;
+  if (state.text && state.text.id === r.id) return state.text;
+  if (!r.sample) {
+    const t = await history.getText(r.id);
+    if (t && state.report === r) { state.text = t; return t; }
+  }
+  return null;
+}
+
+async function recheck() {
+  const r = state.report;
+  const t = await ensureText();
+  if (!t) { toast('This report’s text wasn’t saved. Upload the file again to re-check it.'); return; }
+  await runCheck({ title: r.title, paragraphs: t.paragraphs, sample: r.sample, source: t.source || null, sourceName: t.sourceName });
+}
+
+// Offer a file to save: through claude.ai's download prompt when the page is viewed there, else a normal download.
+async function saveFile(filename, blob) {
+  let dl = null;
+  try { dl = self.claude && typeof self.claude.use === 'function' ? await self.claude.use('downloads') : null; } catch { dl = null; }
+  if (dl) {
+    try {
+      await dl.save({ filename, data: blob });
+      toast('Your file is ready.');
+      return true;
+    } catch (e) {
+      if (e && e.code === 'declined') return false;
+      if (e && e.code === 'rate_limited') { toast('A save is already waiting for you to confirm.'); return false; }
+      if (e && !['unavailable', 'not_granted', 'capability_disabled', 'capability_removed'].includes(e.code)) {
+        toast('The file couldn’t be saved here.');
+        return false;
+      }
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  return true;
+}
+
+const safeName = (s) => String(s || 'Manuscript').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Manuscript';
+
+function noteText(it) {
+  const cat = CATS.find((c) => c.id === it.cat)?.label || '';
+  const lines = [`${cat} · ${SEV_LABEL[it.sev]} · ${it.kind}`, it.msg];
+  if (it.note) lines.push(it.note);
+  const sugg = (it.sugg && it.sugg.length) ? it.sugg : (it.fix ? [it.fix] : []);
+  if (sugg.length) lines.push('Try: ' + sugg.join(', '));
+  return lines.join('\n');
+}
+
+async function exportDocx(cats) {
+  const r = state.report;
+  const t = await ensureText();
+  if (!t || !textReady()) { toast('Check the book again first, so its text is available.'); return; }
+  const btn = $('#btn-export-go');
+  btn.disabled = true;
+  btn.textContent = 'Making your Word file…';
+  try {
+    const chParas = chapterParagraphs(r, t.paragraphs);
+    const issues = visibleIssues().filter((i) => cats.has(i.cat));
+    const locs = noteLocations(issues, r, chParas);
+    const notes = locs.map((l) => ({ ch: l.ch, p: l.p, start: l.start, end: l.end, text: noteText(l.issue) }));
+    const chapters = r.chapters.map((c, i) => ({ title: c.title, paragraphs: chParas[i] }));
+    const { blob, placed } = await buildDocx({ title: r.title, chapters, notes, source: t.source || null, allParagraphs: t.paragraphs });
+    closeDialog($('#dlg-export'));
+    const ok = await saveFile(safeName(r.title) + ' - with notes.docx', blob);
+    if (ok) toast(`Word file made with ${plural(placed, 'comment')}.`);
+  } catch (e) {
+    toast('The Word file couldn’t be made: ' + (e.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Make the Word file';
+  }
+}
+
+async function exportReportText() {
+  const r = state.report;
+  await saveFile(safeName(r.title) + ' - report.txt', new Blob([reportAsText()], { type: 'text/plain' }));
+}
+
+// ------------------------------------------------------------------ reading view
+
+function readerIssues() {
+  const cats = state.reader.cats;
+  return visibleIssues().filter((i) => cats.has(i.cat));
+}
+
+function openReader(ch, focusIssueId) {
+  if (!textReady()) { toast('Check the book again to open the reading view.'); return; }
+  state.reader = Object.assign(state.reader || { cats: new Set(CATS.map((c) => c.id)) }, { ch, focus: focusIssueId || null, openP: null });
+  renderReader();
+  openDialog($('#dlg-reader'));
+}
+
+function paraHtml(text, ranges) {
+  const cuts = new Set([0, text.length]);
+  for (const r of ranges) { cuts.add(Math.max(0, Math.min(text.length, r.start))); cuts.add(Math.max(0, Math.min(text.length, r.end))); }
+  const pts = [...cuts].sort((a, b) => a - b);
+  const rank = { high: 0, medium: 1, low: 2 };
+  let html = '';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const seg = text.slice(a, b);
+    const active = ranges.filter((r) => r.start < b && r.end > a);
+    if (!active.length) { html += esc(seg); continue; }
+    active.sort((x, y) => rank[x.issue.sev] - rank[y.issue.sev]);
+    const top = active[0].issue;
+    html += `<mark class="hl ${top.cat} sev-${top.sev}" tabindex="0" role="button" data-ids="${esc([...new Set(active.map((r) => r.issue.id))].join(' '))}" title="${esc(active.map((r) => r.issue.msg).join('\n'))}">${esc(seg)}</mark>`;
+  }
+  return html;
+}
+
+function renderReader() {
+  const r = state.report;
+  const R = state.reader;
+  if (!state.readerCache || state.readerCache.id !== r.id) state.readerCache = { id: r.id, paras: chapterParagraphs(r, state.text.paragraphs) };
+  const chParas = state.readerCache.paras;
+  const paras = chParas[R.ch] || [];
+  const issues = readerIssues().filter((i) => issueChapters(i).includes(R.ch) || (i.quotes || []).some((q) => q.ch === R.ch));
+  const locs = noteLocations(issues, r, chParas).filter((l) => l.ch === R.ch);
+  const byP = new Map();
+  for (const l of locs) { if (!byP.has(l.p)) byP.set(l.p, []); byP.get(l.p).push(l); }
+  $('#reader-ch').innerHTML = r.chapters.map((c, i) => `<option value="${i}" ${i === R.ch ? 'selected' : ''}>${esc(c.title)}</option>`).join('');
+  $('#reader-prev').disabled = R.ch <= 0;
+  $('#reader-next').disabled = R.ch >= r.chapters.length - 1;
+  $('#reader-cats').innerHTML = CATS.map((c) => `<button class="chip" type="button" data-rcat="${c.id}" aria-pressed="${R.cats.has(c.id)}"><span class="dot ${c.id}"></span>${c.label}</button>`).join('');
+  const count = new Set(locs.map((l) => l.issue.id)).size;
+  $('#reader-body').innerHTML = `
+    <h2 class="reader-title">${esc(r.chapters[R.ch].title)}</h2>
+    <p class="hint" style="text-align:center;margin:0 0 24px">${count ? `${plural(count, 'note')} in this chapter. Tap underlined text to read a note.` : 'No notes in this chapter.'}</p>
+    ${paras.map((pp, i) => `<p class="r-para" data-p="${i}" id="rp-${i}">${paraHtml(pp.text, byP.get(i) || [])}</p><div class="r-notes" id="rn-${i}" hidden></div>`).join('')}`;
+  if (R.focus) {
+    const l = locs.find((x) => x.issue.id === R.focus);
+    R.focus = null;
+    if (l) setTimeout(() => { showReaderNotes(l.p, [l.issue.id]); $('#rp-' + l.p).scrollIntoView({ block: 'center' }); }, 30);
+  } else {
+    $('#reader-body').scrollTop = 0;
+  }
+}
+
+function showReaderNotes(p, ids) {
+  document.querySelectorAll('#reader-body .r-notes').forEach((n) => { n.hidden = true; n.innerHTML = ''; });
+  const box = $('#rn-' + p);
+  if (!box) return;
+  const list = state.report.issues.filter((i) => ids.includes(i.id));
+  box.innerHTML = list.map((it) => issueCard(it, { compact: true })).join('');
+  box.hidden = false;
+}
+
+// ------------------------------------------------------------------ since the last check
+
+function compareHtml() {
+  const c = state.report.compare;
+  if (!c) return '';
+  const d = new Date(c.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const fixed = (c.fixedList || []).filter((i) => !state.ignored.has(i.id));
+  const added = visibleIssues().filter((i) => i.isNew);
+  const showAll = state.compareAll;
+  const li = (i) => `<li><span class="dot ${i.cat}"></span><span><b>${esc(i.kind)}:</b> ${esc(i.msg)}</span></li>`;
+  return `
+    <section class="compare-box">
+      <div class="compare-head">
+        <h3 class="section-title">Since your check on ${esc(d)}</h3>
+        <p class="section-lead"><b class="good">${plural(c.fixed, 'note')} gone</b> and <b class="${added.length ? 'bad' : 'good'}">${plural(added.length, 'new note')}</b>.</p>
+      </div>
+      <div class="two-col">
+        <div class="stack"><h4 class="mini-title">Gone</h4>${fixed.length ? `<ul class="clist">${fixed.slice(0, showAll ? 400 : 6).map(li).join('')}</ul>` : '<p class="hint">Nothing has gone since last time.</p>'}</div>
+        <div class="stack"><h4 class="mini-title">New</h4>${added.length ? `<ul class="clist">${added.slice(0, showAll ? 400 : 6).map(li).join('')}</ul>` : '<p class="hint">Nothing new. Well done.</p>'}</div>
+      </div>
+      ${(fixed.length > 6 || added.length > 6) && !showAll ? '<div><button class="btn small" type="button" data-action="compare-all">Show every change</button></div>' : ''}
+    </section>`;
+}
+
+// ------------------------------------------------------------------ story bible editor
+
+const BIBLE_FIELDS = [
+  ['pronouns', 'Pronouns', 'select', ['', 'he', 'she', 'they']],
+  ['eyes', 'Eye colour', 'text'], ['hair', 'Hair colour', 'text'],
+  ['born', 'Year born', 'text'],
+  ['height', 'Height', 'select', ['', 'tall', 'short']], ['build', 'Build', 'select', ['', 'slim', 'heavy']],
+  ['hand', 'Writes with', 'select', ['', 'left', 'right']], ['glasses', 'Glasses', 'select', ['', 'yes', 'no']],
+  ['accent', 'Accent', 'text'], ['marks', 'Scars, tattoos', 'text'], ['notes', 'Other notes', 'textarea']
+];
+
+function bibleSummary(b) {
+  const parts = [];
+  for (const [k, label] of BIBLE_FIELDS) if (b && b[k] && k !== 'notes') parts.push(`${label.toLowerCase()}: ${b[k]}`);
+  return parts.join(' · ');
+}
+
+function bibleForm(c, b) {
+  const id = (k) => `bb-${titleKey(c.name).replace(/ /g, '-')}-${k}`;
+  const p = c.profile || {};
+  const guess = (arr) => (arr && arr[0] ? arr[0].value : '');
+  const hints = { eyes: guess(p.eyes), hair: guess(p.hair), born: guess(p.born), accent: guess(p.accent), marks: guess(p.marks) };
+  return `<form class="bible-form" data-name="${esc(c.name)}">
+    <p class="hint">Write down the facts you’ve decided. Next time you check the book, anything that disagrees is flagged under Continuity as “Story bible”.</p>
+    <div class="bible-grid">
+    ${BIBLE_FIELDS.map(([k, label, type, opts]) => {
+      const v = (b && b[k]) || '';
+      let input;
+      if (type === 'select') input = `<select id="${id(k)}" name="${k}">${opts.map((o) => `<option value="${o}" ${o === v ? 'selected' : ''}>${o ? o : (k === 'pronouns' ? 'Work it out' : 'Not set')}</option>`).join('')}</select>`;
+      else if (type === 'textarea') input = `<textarea id="${id(k)}" name="${k}" rows="2">${esc(v)}</textarea>`;
+      else input = `<input type="text" id="${id(k)}" name="${k}" value="${esc(v)}" placeholder="${esc(hints[k] ? 'Book says: ' + hints[k] : '')}">`;
+      return `<label class="bible-field ${type === 'textarea' ? 'wide' : ''}" for="${id(k)}"><span>${label}</span>${input}</label>`;
+    }).join('')}
+    </div>
+    <div class="chips"><button class="btn small primary" type="submit">Save</button><button class="btn small ghost" type="button" data-action="bible-close">Cancel</button></div>
+  </form>`;
+}
+
 // ------------------------------------------------------------------ copy as text
 
 function reportAsText() {
@@ -732,6 +1000,7 @@ function onReportClick(e) {
     persistIgnored();
     const card = t.closest('.issue');
     card.remove();
+    if (t.closest('#dlg-reader')) { renderReader(); renderTabs(); renderPanel(); return; }
     renderTabs();
     toast('Ignored. You can bring ignored notes back in Settings.');
     if (state.tab === 'overview') renderPanel();
@@ -751,6 +1020,33 @@ function onReportClick(e) {
     const cat = t.dataset.cat;
     state.shown[cat] = (state.shown[cat] || PAGE) + PAGE;
     $('#list-' + cat).innerHTML = issueListHtml(cat);
+  } else if (a === 'read') {
+    const first = state.report.chapters.findIndex((c, i) => visibleIssues().some((it) => issueChapters(it).includes(i)));
+    openReader(Math.max(0, first));
+  } else if (a === 'show-in-book') {
+    const it = state.report.issues.find((i) => i.id === t.dataset.id);
+    if (it) openReader(it.quotes[0].ch, it.id);
+  } else if (a === 'export') {
+    openDialog($('#dlg-export'));
+  } else if (a === 'recheck') {
+    recheck();
+  } else if (a === 'compare-all') {
+    state.compareAll = true;
+    renderPanel();
+  } else if (a === 'new-only') {
+    const cat = t.closest('[data-cat]').dataset.cat;
+    filterState(cat).newOnly = !filterState(cat).newOnly;
+    t.setAttribute('aria-pressed', String(filterState(cat).newOnly));
+    state.shown[cat] = PAGE;
+    $('#list-' + cat).innerHTML = issueListHtml(cat);
+  } else if (a === 'bible-open') {
+    state.bibleOpen = t.dataset.name;
+    renderPanel();
+    const f = document.querySelector('.bible-form');
+    if (f) { f.scrollIntoView({ block: 'nearest' }); const first = f.querySelector('select,input'); if (first) first.focus(); }
+  } else if (a === 'bible-close') {
+    state.bibleOpen = null;
+    renderPanel();
   } else if (a === 'char-type') {
     state.charType = t.dataset.type;
     state.shown.characters = 30;
@@ -897,8 +1193,60 @@ function init() {
 
   $('#brand').addEventListener('click', (e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
 
+  // Reading view
+  const dR = $('#dlg-reader');
+  const go = (ch) => { state.reader.ch = ch; state.reader.focus = null; renderReader(); };
+  $('#reader-prev').addEventListener('click', () => go(state.reader.ch - 1));
+  $('#reader-next').addEventListener('click', () => go(state.reader.ch + 1));
+  $('#reader-ch').addEventListener('change', (e) => go(+e.target.value));
+  dR.addEventListener('click', (e) => {
+    const mark = e.target.closest('mark.hl');
+    if (mark) { showReaderNotes(+mark.closest('.r-para').dataset.p, mark.dataset.ids.split(' ')); return; }
+    const chip = e.target.closest('[data-rcat]');
+    if (chip) {
+      const c = chip.dataset.rcat;
+      if (state.reader.cats.has(c)) state.reader.cats.delete(c); else state.reader.cats.add(c);
+      renderReader();
+      return;
+    }
+    const act = e.target.closest('[data-action]');
+    if (act) {
+      onReportClick(e);
+      if (act.dataset.action === 'addword') renderReader();
+    }
+  });
+  dR.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('mark.hl')) { e.preventDefault(); e.target.click(); }
+  });
+
+  // Word download
+  $('#btn-export-go').addEventListener('click', () => {
+    const cats = new Set([...document.querySelectorAll('#export-cats input:checked')].map((x) => x.value));
+    if (!cats.size) { toast('Choose at least one kind of note.'); return; }
+    exportDocx(cats);
+  });
+
+  // Story bible
+  report.addEventListener('submit', (e) => {
+    const form = e.target.closest('.bible-form');
+    if (!form) return;
+    e.preventDefault();
+    const b = getBible(state.report.title);
+    const entry = {};
+    for (const el of form.querySelectorAll('[name]')) if (el.value.trim()) entry[el.name] = el.value.trim();
+    if (Object.keys(entry).length) b[form.dataset.name] = entry; else delete b[form.dataset.name];
+    setBible(state.report.title, b);
+    state.bibleOpen = null;
+    renderPanel();
+    toast(textReady() || (state.text && state.text.id === state.report.id) ? 'Saved. Tap “Check again” to compare the book with your story bible.' : 'Saved. It will be used the next time you check this book.');
+  });
+
   // Settings
   const dS = $('#dlg-settings');
+  $('#set-strict-dialogue').checked = !!prefs.get('strictDialogue', false);
+  $('#set-southern').checked = !!prefs.get('southern', false);
+  $('#set-strict-dialogue').addEventListener('change', (e) => prefs.set('strictDialogue', e.target.checked));
+  $('#set-southern').addEventListener('change', (e) => prefs.set('southern', e.target.checked));
   $('#btn-settings').addEventListener('click', () => { renderSettings(); openDialog(dS); });
   $('#btn-save-words').addEventListener('click', () => {
     state.words = [...new Set($('#set-words').value.split('\n').map((w) => w.trim()).filter(Boolean))];
@@ -933,7 +1281,7 @@ function init() {
     const del = e.target.closest('[data-del]')?.dataset.del;
     if (open) {
       const r = await history.get(open);
-      if (r) { stopLanguageTool(); state.chapterTexts = null; showReport(r); prefs.set('last', r.id); closeDialog(dH); $('#report').scrollIntoView({ behavior: 'smooth' }); }
+      if (r) { stopLanguageTool(); state.chapterTexts = null; state.text = null; showReport(r); prefs.set('last', r.id); closeDialog(dH); $('#report').scrollIntoView({ behavior: 'smooth' }); }
     } else if (del) {
       await history.remove(del);
       if (state.report && state.report.id === del) prefs.set('last', null);

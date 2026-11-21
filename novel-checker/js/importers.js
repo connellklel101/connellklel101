@@ -2,7 +2,7 @@
 // Everything happens in the browser. Nothing is uploaded.
 
 const loaded = {};
-function loadScript(src) {
+export function loadScript(src) {
   if (!loaded[src]) {
     loaded[src] = new Promise((resolve, reject) => {
       const s = document.createElement('script');
@@ -45,9 +45,10 @@ export async function importFile(file, onStatus = () => {}) {
     onStatus('Opening the Word document');
     await loadScript('vendor/mammoth.browser.min.js');
     const buf = await file.arrayBuffer();
-    const res = await self.mammoth.convertToHtml({ arrayBuffer: buf });
+    const res = await self.mammoth.convertToHtml({ arrayBuffer: buf.slice(0) });
     const doc = new DOMParser().parseFromString(res.value, 'text/html');
-    return { title, paragraphs: blocksFromDocument(doc) };
+    // Keep the original file so notes can be added to it as Word comments, formatting intact.
+    return { title, paragraphs: blocksFromDocument(doc), source: buf, sourceName: name };
   }
   if (ext === 'epub') {
     onStatus('Opening the EPUB');

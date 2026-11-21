@@ -1,7 +1,7 @@
 // Lets the site open and work offline after the first visit.
-const CACHE = 'novel-checker-v1';
+const CACHE = 'novel-checker-v2';
 const FILES = [
-  './', 'index.html', 'css/styles.css', 'js/app.js', 'js/importers.js', 'js/storage.js', 'js/languagetool.js',
+  './', 'index.html', 'css/styles.css', 'js/app.js', 'js/importers.js', 'js/storage.js', 'js/languagetool.js', 'js/annotate.js', 'js/docx-export.js',
   'engine/analyzer.js', 'engine/worker.js', 'vendor/nspell.js', 'vendor/mammoth.browser.min.js', 'vendor/jszip.min.js',
   'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'dict/en-US.aff', 'dict/en-US.dic', 'dict/en-GB.aff', 'dict/en-GB.dic',
   'samples/salt-and-lantern.txt', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'

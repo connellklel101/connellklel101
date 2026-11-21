@@ -107,6 +107,29 @@ test('new checks stay quiet on correct text', () => {
   const bad = t.issues.filter((i) => i.cat === 'continuity');
   assert.deepEqual(bad.map((i) => i.msg), []);
 });
+test('dialogue is checked gently', () => {
+  const d = run(`Chapter 1\n\n"I ain't gonna wait, y'all," Jed said. "We're goin' now, an' that's that." "I should of known," Jed said.\n\n` +
+    `"Fetch 'em," Jed said. "I definately mean it." He walked off. "Wot a mess," said Jed.`);
+  const sp = d.issues.filter((i) => i.cat === 'spelling');
+  assert.ok(!sp.some((i) => /ain't|gonna|y'all|goin|em\b/.test(i.word || '')), 'slang flagged: ' + sp.map((i) => i.word));
+  assert.ok(sp.some((i) => i.word === 'definately' && i.kind === 'Spelling'), 'typo in dialogue should still be flagged');
+  const ofIssue = d.issues.find((i) => /should of/.test(i.msg));
+  assert.equal(ofIssue && ofIssue.sev, 'low');
+  const strict = A.analyze(A.textToParagraphs('Chapter 1\n\n"I should of known," Jed said.'), spell, { strictDialogue: true });
+  assert.equal(strict.issues.find((i) => /should of/.test(i.msg)).sev, 'high');
+});
+test('story bible', () => {
+  const b = run(sample.slice(sample.indexOf('Chapter 1')), { bible: { Mara: { eyes: 'grey', hair: '' }, Tom: { pronouns: 'he' }, Elias: { marks: 'scar on his left cheek', born: '1950' } } });
+  assert.ok(b.issues.some((i) => i.kind === 'Story bible' && /Mara's eyes are grey, but Chapter 4: The Lenses says blue/.test(i.msg)));
+  assert.ok(!b.issues.some((i) => i.kind === 'Story bible' && /says gray/.test(i.msg)), 'grey and gray are the same');
+  assert.ok(b.issues.some((i) => i.kind === 'Story bible' && /scar is on the left cheek/.test(i.msg)));
+  assert.ok(b.issues.some((i) => i.kind === 'Age and year' && /story bible says Elias was born in 1950/.test(i.msg)));
+});
+test('southern hemisphere seasons', () => {
+  const t = 'Chapter 1\n\nIt was Tuesday, June 3, 2003. That winter was the coldest in years, and Nell hated it.';
+  assert.ok(!run(t, { southern: true }).issues.some((i) => i.kind === 'Season'));
+  assert.ok(run(t).issues.some((i) => i.kind === 'Season'));
+});
 test('number parsing', () => {
   assert.equal(A.parseNum('forty-two'), 42);
   assert.equal(A.parseOrd('twenty-first'), 21);

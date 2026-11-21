@@ -1297,7 +1297,10 @@
   const fmtDay = (n) => { const x = fromDay(n); return `${cap(WEEKDAYS[x.wd]).slice(0, 3)} ${x.d} ${cap(MONTHS[x.m]).slice(0, 3)} ${x.y}`; };
   const FLASHBACK = /\b(remembered|recalled|years (?:ago|before|earlier)|as a (?:child|boy|girl|teenager)|back then|in those days|used to|long ago|once upon|when (?:he|she|I|they) (?:was|were) (?:young|little|a child|a boy|a girl|small))\b/i;
 
-  function storyCalendar(model, chapters) {
+  const FLIP_SEASON = { summer: 'winter', winter: 'summer', spring: 'autumn', autumn: 'spring' };
+
+  function storyCalendar(model, chapters, opts) {
+    opts = opts || {};
     const WD = WEEKDAYS.join('|'), MO = MONTHS.join('|');
     const fullDate = new RegExp('\\b(?:(' + WD + '),?\\s+)?(?:(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(' + MO + ')|(' + MO + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?)(?:,?\\s+(\\d{4}))?\\b', 'gi');
     const yearOnly = /\b(?:in|the (?:spring|summer|autumn|fall|winter) of|it was|that was)\s+(1[5-9]\d\d|20\d\d|21\d\d)\b/gi;
@@ -1400,10 +1403,10 @@
           const season = ev.m[1].toLowerCase();
           const known = st.date != null && st.exact && S.idx - (st.dateIdx || 0) <= 40 && st.dateCh === S.ch ? fromDay(st.date).m
             : st.monthHint && S.idx - st.monthHint.idx <= 30 ? st.monthHint.m : null;
-          if (known != null && !MONTH_SEASONS[known].includes(season)) {
+          if (known != null && !MONTH_SEASONS[known].includes(opts.southern ? FLIP_SEASON[season] : season)) {
             issues.push({ kind: 'Season', sev: 'medium', key: 'season:' + S.ch + ':' + hash(S.text),
               msg: `The text says it's ${season}, but the story is in ${cap(MONTHS[known])} here.`,
-              note: 'This assumes the northern hemisphere. If your story is set in the south, ignore it.', quotes: [q()] });
+              note: opts.southern ? 'Seasons are checked for the southern hemisphere (see Settings).' : 'This assumes the northern hemisphere. If your story is set in the south, switch that on in Settings.', quotes: [q()] });
           }
         }
       }
@@ -1445,6 +1448,13 @@
 
   // ------------------------------------------------------------------ spelling
 
+  // Spoken English that a dictionary doesn't know. Inside dialogue these are fine.
+  const SLANG = new Set(("gonna wanna gotta ain't y'all dunno lemme gimme kinda sorta outta ya yeah yep yup nope nah dontcha " +
+    "whatcha gotcha c'mon s'pose innit coulda woulda shoulda musta hafta oughta lotta alright okay ok mkay huh hmm hmmm uh uhh " +
+    "um umm er erm ugh ahh aww eh oi naw yer yeh dang darn gosh golly heck jeez geez whaddya howdy aye nae ken cannae dinnae " +
+    "wouldnae couldnae didnae isnae wasnae ach och shush shh psst tsk mm mmm hah heh ha haha hahaha whoa woah yo hey wha " +
+    "gotta y'know d'you don'tcha 'em").split(' '));
+
   function spellingAnalysis(model, spell, names, opts) {
     const custom = new Set((opts.customWords || []).map((w) => w.toLowerCase()));
     const cache = new Map();
@@ -1466,11 +1476,19 @@
         if (w.length === 1) continue;
         if (/^(?:[A-Z]{2,5}s?)$/.test(w)) continue; // acronyms
         if (ok(w)) continue;
+        const dlg = inDialogue(S, t.s);
+        if (dlg && !opts.strictDialogue) {
+          if (SLANG.has(t.lw)) continue;
+          const after = S.text.charAt(t.e), before = S.text.charAt(t.s - 1);
+          if (/['’]/.test(after) && /in$/.test(t.lw)) continue; // goin', nothin'
+          if (/['’]/.test(before) && /^(em|cause|bout|round|til|till|nother|course|tis|twas|ow|ere|appen|e|im|er)$/.test(t.lw)) continue; // 'em, 'cause
+        }
         const key = t.lw.replace(/'s$/, '');
         if (custom.has(key)) continue;
         let g = groups.get(key);
-        if (!g) { g = { word: w.replace(/'s$/i, ''), count: 0, chapters: new Set(), quotes: [], allCap: true, mid: false }; groups.set(key, g); }
+        if (!g) { g = { word: w.replace(/'s$/i, ''), count: 0, dlg: 0, chapters: new Set(), quotes: [], allCap: true, mid: false }; groups.set(key, g); }
         g.count++;
+        if (dlg) g.dlg++;
         if (!t.cap) g.allCap = false;
         if (!t.start) g.mid = true;
         g.chapters.add(S.ch);
@@ -1607,13 +1625,21 @@
   const A_EXC = /^(uni(?![nm])|use|usu|uti|ure|uri|ura|euro|eu|ewe|one\b|once|uk\b|u\.)/i;
   const AN_EXC = /^(hour|honest|honou?r|heir|herb)/i;
 
-  function grammarAnalysis(model) {
+  const KEEP_IN_DIALOGUE = new Set(['Repeated word', 'Quotation marks', 'Brackets']);
+
+  function grammarAnalysis(model, opts) {
+    opts = opts || {};
     const issues = [];
     const counts = {};
     const add = (kind, sev, S, s, e, msg, fix, rule) => {
       counts[rule] = (counts[rule] || 0) + 1;
       if (counts[rule] > 250) return;
-      issues.push({ kind, sev, key: 'gr:' + rule + ':' + S.ch + ':' + hash(S.text + s), msg, fix, quotes: [makeQuote(S, s, e)] });
+      let note = null;
+      if (!opts.strictDialogue && !KEEP_IN_DIALOGUE.has(kind) && inDialogue(S, s)) {
+        sev = 'low';
+        note = 'This is in dialogue. Fine if it\'s how the character speaks.';
+      }
+      issues.push({ kind, sev, key: 'gr:' + rule + ':' + S.ch + ':' + hash(S.text + s), msg, fix, note, quotes: [makeQuote(S, s, e)] });
     };
     for (const S of model.sentences) {
       const text = S.text;
@@ -1673,7 +1699,9 @@
 
   // ------------------------------------------------------------------ style
 
-  function styleAnalysis(model, names, chapters) {
+  function styleAnalysis(model, names, chapters, opts) {
+    opts = opts || {};
+    const gentle = !opts.strictDialogue;
     const issues = [];
     const words = [];
     let sentenceWords = [];
@@ -1718,7 +1746,8 @@
         passive++;
         if (passiveEx.length < 60) passiveEx.push(makeQuote(S, m.index, m.index + m[0].length));
       }
-      if (T.length > 55) longSentences.push(S);
+      const dlgChars = S.dlg.reduce((n, [a, b]) => n + b - a, 0);
+      if (T.length > 55 && !(gentle && dlgChars > S.text.length / 2)) longSentences.push(S);
       // "said softly"
       const sa = /\b(said|asked|replied|whispered|shouted|muttered|murmured|called|cried)\s+([a-z]+ly)\b/gi;
       while ((m = sa.exec(S.text))) {
@@ -1761,6 +1790,7 @@
       const reported = new Set();
       toks.forEach(({ t, S }, k) => {
         if (t.lw.length < 5 || STOP.has(t.lw) || COMMONISH.has(t.lw) || names.has(t.base)) return;
+        if (gentle && inDialogue(S, t.s)) return; // people repeat themselves when they talk
         const prev = lastSeen.get(t.lw);
         if (prev != null && k - prev <= 30 && !reported.has(t.lw) && echoCount < 200) {
           reported.add(t.lw);
@@ -1854,6 +1884,14 @@
     progress('Finding characters', 0.15);
     const { names, stats, candidates } = findNames(model, spell, opts);
     const gender = inferGender(model, names);
+    const bible = opts.bible || {};
+    for (const [n, b] of Object.entries(bible)) {
+      if (!b) continue;
+      if (b.pronouns === 'he' || b.pronouns === 'she') {
+        gender.set(n, b.pronouns);
+        gender.tally.set(n, b.pronouns === 'he' ? { he: 99, she: 0 } : { he: 0, she: 99 });
+      } else if (b.pronouns === 'they') { gender.delete(n); gender.tally.delete(n); }
+    }
     const nameType = classifyNames(model, stats, gender);
     const typeOf = (x) => nameType.get(x) || 'other';
     const issues = [];
@@ -1932,9 +1970,13 @@
     };
     const possPron = (o) => (o === 'Narrator' ? 'my' : gender.get(o) === 'he' ? 'his' : gender.get(o) === 'she' ? 'her' : 'their');
     const whoName = (o) => (o === 'Narrator' ? 'The narrator' : o);
-    const calendar = storyCalendar(model, chapters);
+    const calendar = storyCalendar(model, chapters, opts);
     const births = extractBirths(model, names, gender);
     const birthBy = new Map();
+    for (const [n, b] of Object.entries(bible)) {
+      const y = b && parseInt(b.born, 10);
+      if (y > 1000 && y < 2300) birthBy.set(n, { owner: n, year: y, fromBible: true });
+    }
     for (const b of births) {
       if (!birthBy.has(b.owner)) birthBy.set(b.owner, b);
       prof(b.owner).born.push({ value: String(b.year), ch: b.S.ch, conf: b.conf, quote: makeQuote(b.S, b.s, b.e) });
@@ -1989,9 +2031,9 @@
           const lo = y - born.year - 1, hi = y - born.year;
           if (a.value < lo || a.value > hi) {
             push('continuity', { kind: 'Age and year', sev: 'high', key: 'ageyr:' + owner + ':' + born.year + ':' + a.value + ':' + y,
-              msg: `${who} was born in ${born.year}, so in ${y} ${possPron(owner) === 'their' ? 'they' : possPron(owner) === 'his' ? 'he' : possPron(owner) === 'her' ? 'she' : 'I'} would be ${lo} or ${hi}, not ${a.value}.`,
+              msg: `${born.fromBible ? 'Your story bible says ' + who + ' was' : who + ' was'} born in ${born.year}, so in ${y} ${possPron(owner) === 'their' ? 'they' : possPron(owner) === 'his' ? 'he' : possPron(owner) === 'her' ? 'she' : 'I'} would be ${lo} or ${hi}, not ${a.value}.`,
               note: 'The year comes from the most recent date in the story. If time has passed that the text doesn\'t mention, ignore this.',
-              quotes: [makeQuote(born.S, born.s, born.e), makeQuote(a.S, a.s, a.e)], owner });
+              quotes: born.fromBible ? [makeQuote(a.S, a.s, a.e)] : [makeQuote(born.S, born.s, born.e), makeQuote(a.S, a.s, a.e)], owner });
             break;
           }
         }
@@ -2093,6 +2135,7 @@
     const rels = extractRelations(model, names, gender);
     for (const r of rels) {
       prof(r.b).family.push({ value: `${r.owner === 'Narrator' ? 'the narrator' : r.owner}'s ${r.rel}`, ch: r.S.ch, conf: r.conf, quote: makeQuote(r.S, r.s, r.e) });
+      prof(r.owner).family.push({ value: `${r.rel}: ${r.b}`, ch: r.S.ch, conf: r.conf, quote: makeQuote(r.S, r.s, r.e) });
     }
     relationIssues(rels, gender, chapters).forEach((it) => push('continuity', it));
 
@@ -2102,6 +2145,52 @@
     const pt = povTense(model, chapters, names);
     pt.issues.forEach((it) => push('continuity', it));
     calendar.issues.forEach((it) => push('continuity', it));
+
+    // --- the writer's story bible
+    for (const [n, b] of Object.entries(bible)) {
+      const P = profile.get(n);
+      if (!b || !P) continue;
+      const clash = (field, label, bibleVal, rec, shown) => push('continuity', { kind: 'Story bible', sev: 'high',
+        key: 'bible:' + n + ':' + field + ':' + rec.value + ':' + rec.ch,
+        msg: `Your story bible says ${n}'s ${label} ${bibleVal}, but ${chapters[rec.ch].title} says ${shown || rec.value}.`,
+        quotes: [rec.quote], owner: n });
+      for (const [field, idx, compat, label] of [['eyes', EYE_IDX, EYE_COMPAT, 'eyes are'], ['hair', HAIR_IDX, HAIR_COMPAT, 'hair is']]) {
+        const want = String(b[field] || '').toLowerCase().split(/[\s,/-]+/).flatMap((w) => [...(idx.get(w) || [])]);
+        if (!want.length) continue;
+        const seen = new Set();
+        for (const rec of P[field] || []) {
+          const got = rec.value.split('-').flatMap((w) => [...(idx.get(w) || [])]);
+          if (got.length && !compatible(want, got, compat) && !seen.has(rec.value)) { seen.add(rec.value); clash(field, label, b[field], rec); }
+        }
+      }
+      for (const [field, dims, label] of [['height', ['tall', 'short'], 'is'], ['build', ['slim', 'heavy'], 'is']]) {
+        const want = String(b[field] || '').toLowerCase();
+        const wantFam = dims.find((f) => f === want || BUILD_WORDS[f].includes(want));
+        if (!wantFam) continue;
+        for (const rec of P[field === 'height' ? 'stature' : 'build'] || []) {
+          const fam = dims.find((f) => BUILD_WORDS[f].includes(rec.value));
+          if (fam && fam !== wantFam) { clash(field, label, b[field], rec); break; }
+        }
+      }
+      if (/^(left|right)/i.test(b.hand || '')) {
+        const want = b.hand.toLowerCase().startsWith('left') ? 'left' : 'right';
+        const rec = (P.hand || []).find((r) => r.value !== want);
+        if (rec) clash('hand', 'is', want + '-handed', rec, rec.value + '-handed');
+      }
+      if (b.accent) {
+        const rec = (P.accent || []).find((r) => r.value.toLowerCase() !== String(b.accent).toLowerCase().replace(/\s*accent$/, ''));
+        if (rec) clash('accent', 'accent is', b.accent, rec);
+      }
+      if (b.glasses === 'yes' || b.glasses === 'no') {
+        const rec = (P.glasses || []).find((r) => (r.value === 'wears glasses') !== (b.glasses === 'yes'));
+        if (rec) clash('glasses', b.glasses === 'yes' ? 'glasses: they wear' : 'glasses: they don\'t wear', 'them', rec);
+      }
+      const mark = String(b.marks || '').toLowerCase().match(new RegExp('(scar|tattoo|birthmark|mole)[^,;]*?\\b(?:(left|right)\\s+)?(' + SIDE_PARTS + ')\\b'));
+      if (mark && mark[2]) {
+        const rec = (P.marks || []).find((r) => r.value.startsWith(mark[1] + ':') && r.value.endsWith(' ' + mark[3]) && !r.value.includes(mark[2] + ' '));
+        if (rec && /\b(left|right)\b/.test(rec.value)) clash('marks', mark[1] + ' is on the', mark[2] + ' ' + mark[3], rec, 'the ' + rec.value.split(': ')[1]);
+      }
+    }
 
     // --- dead characters who come back
     progress('Checking who is still alive', 0.45);
@@ -2129,6 +2218,17 @@
             word: g.word, count: g.count, sugg: [], chapters: [...g.chapters].sort((a, b) => a - b), quotes: g.quotes });
           continue;
         }
+        // Swapped letters ("teh") are a typo even in dialogue; other unknown words there may be dialect.
+        const s0 = g.sugg && g.sugg[0] ? g.sugg[0].toLowerCase() : '';
+        const lw0 = g.word.toLowerCase();
+        const typoLike = s0 && !/['’]/.test(g.word) && Math.abs(s0.length - lw0.length) <= 1 && dl(lw0, s0) <= 2 && s0[0] === lw0[0];
+        if (g.dlg === g.count && !opts.strictDialogue && !typoLike) {
+          push('spelling', { kind: 'Spelling in dialogue', sev: 'low', key: 'sp:' + g.word.toLowerCase(),
+            msg: g.sugg && g.sugg.length ? `"${g.word}" isn't in the dictionary. Did you mean "${g.sugg[0]}"?` : `"${g.word}" isn't in the dictionary.`,
+            note: 'It only appears in dialogue, so it may be how a character talks.',
+            word: g.word, count: g.count, sugg: g.sugg || [], chapters: [...g.chapters].sort((a, b) => a - b), quotes: g.quotes });
+          continue;
+        }
         push('spelling', { kind: 'Spelling', sev: g.count >= 3 ? 'medium' : 'high', key: 'sp:' + g.word.toLowerCase(),
           msg: g.sugg && g.sugg.length ? `"${g.word}" isn't in the dictionary. Did you mean "${g.sugg[0]}"?` : `"${g.word}" isn't in the dictionary.`,
           word: g.word, count: g.count, sugg: g.sugg || [], chapters: [...g.chapters].sort((a, b) => a - b), quotes: g.quotes });
@@ -2139,11 +2239,11 @@
 
     // --- grammar
     progress('Checking grammar', 0.75);
-    grammarAnalysis(model).forEach((it) => push('grammar', it));
+    grammarAnalysis(model, opts).forEach((it) => push('grammar', it));
 
     // --- style
     progress('Writing the style report', 0.85);
-    const style = styleAnalysis(model, names, chapters);
+    const style = styleAnalysis(model, names, chapters, opts);
     style.issues.forEach((it) => push('style', it));
 
     // --- characters
@@ -2200,7 +2300,7 @@
       dict: opts.dict || 'en-US',
       ms: Date.now() - t0,
       stats: { words: totalWords, chapters: chapters.length, sentences: model.sentences.length, paragraphs: model.paragraphs.length, quoteMode: model.quoteMode },
-      chapters: chapters.map((c, i) => ({ title: c.title, words: style.stats.chapterWords[i], source: [c.source[0], c.source[c.source.length - 1]],
+      chapters: chapters.map((c, i) => ({ title: c.title, words: style.stats.chapterWords[i], source: [c.source[0], c.source[c.source.length - 1]], paras: c.source,
         pov: pt.info[i].pov, tense: pt.info[i].tense, dates: calendar.chapterDates[i] })),
       issues,
       characters,
